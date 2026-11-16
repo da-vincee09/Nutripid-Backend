@@ -139,7 +139,7 @@ class CaloricRequirementResult:
         self.status = status
         self.daily_kcal = daily_kcal
 
-    @property
+    @property # It allows you to access a method like an attribute.
     def is_ok(self) -> bool:
         return self.status == "ok"
 

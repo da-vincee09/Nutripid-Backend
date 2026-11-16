@@ -1,0 +1,4 @@
+profile_id,scenario,overlap_count,topk_accuracy,expected_top_k,actual_top_k
+26548a59-9cbd-4c16-9061-5b500dbc4fa0,pantry_fraction=0.25,2,0.4,"Pinakbet, Chicken Adobo, Chop Suey, Ginisang Sardinas, Beef Tapa","Pancit Bihon, Tortang Talong, Chicken Adobo, Ginisang Ampalaya, Beef Tapa"
+26548a59-9cbd-4c16-9061-5b500dbc4fa0,pantry_fraction=0.5,3,0.6,"Chicken Adobo, Filipino Chicken Curry, Ginisang Sardinas, Ginisang Ampalaya, Beef Tapa","Pancit Bihon, Tortang Talong, Chicken Adobo, Ginisang Ampalaya, Beef Tapa"
+26548a59-9cbd-4c16-9061-5b500dbc4fa0,pantry_fraction=0.75,1,0.2,"Corned Beef Guisado, Vegetable Lumpia, Filipino Chicken Curry, Beef Tapa, Chicken Tinola","Pancit Bihon, Tortang Talong, Chicken Adobo, Ginisang Ampalaya, Beef Tapa"

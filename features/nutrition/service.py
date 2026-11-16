@@ -188,39 +188,48 @@ def compute_nutritional_adequacy(
     profile: Profile,
 ) -> dict:
     """
-    Combined result per Week 8 Part 3, item 8's shape, plus is_staple.
+    Combines the caloric and food-group assessments
+    to determine whether a meal is nutritionally adequate.
 
-    nutritionally_adequate is None (not False) whenever either half of
-    the computation is itself unavailable — this preserves the "don't
-    silently report a false negative" principle from Part 3, item 8,
-    extended consistently to the food-group side even though the doc's
-    example JSON only spells it out for caloric_adequacy.
-
-    Staple meals (is_staple=True) are not judged as an ulam: caloric
-    adequacy is "unavailable" and both adequacy verdicts are None. The
-    raw proportions are still returned for display.
+    Returns None if the assessment cannot be completed.
+    Staple meals are not evaluated using ulam criteria.
     """
+
+    # Calculate the meal's Go, Grow, and Glow percentages
+    # based on the weights of its ingredients.
     food_group_proportions = compute_food_group_proportions(db, meal)
 
+    # Check if the meal is a staple food, such as garlic fried rice.
+    # Staple meals are not evaluated using ulam-specific criteria.
     if is_staple_meal(meal.name):
         return {
-            "caloric_adequacy": "unavailable",
-            "food_group_proportions": food_group_proportions,
-            "food_group_adequate": None,
-            "nutritionally_adequate": None,
-            "is_staple": True,
+            "caloric_adequacy": "unavailable", # No ulam calorie assessment
+            "food_group_proportions": food_group_proportions,  # Keep raw percentages
+            "food_group_adequate": None,  # No ulam food-group assessment
+            "nutritionally_adequate": None, # No overall verdict
+            "is_staple": True, # Identifies the meal as a staple
         }
 
+    # Check whether the meal's calories are within the user's
+    # acceptable calorie range based on their profile.
     caloric_adequacy = compute_caloric_adequacy(meal, profile)
+
+    # Check whether the meal's Grow and Glow proportions
+    # meet the required ulam food-group targets.
     food_group_adequate = compute_food_group_adequate(food_group_proportions)
 
+    # If either assessment is unavailable, the overall result
+    # is None because the meal cannot be fully evaluated.
     if caloric_adequacy == "unavailable" or food_group_adequate is None:
         nutritionally_adequate = None
     else:
+        # Both conditions must pass for the meal to be
+        # considered nutritionally adequate.
         nutritionally_adequate = (
             caloric_adequacy == "within" and food_group_adequate
         )
 
+    # Return the individual assessments and the final verdict.
     return {
         "caloric_adequacy": caloric_adequacy,
         "food_group_proportions": food_group_proportions,
