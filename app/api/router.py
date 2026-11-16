@@ -8,7 +8,8 @@ from features.meal_planner.router import router as meal_planner_router
 from features.grocery_list.router import router as grocery_list_router
 from features.favorites.router import router as favorites_router
 from features.nutrition.router import router as nutrition_router
-
+from features.weekly_plan.router import router as weekly_plan_router
+from features.savings.router import router as savings_router
 
 api_router = APIRouter()
 
@@ -43,4 +44,12 @@ api_router.include_router(
 
 api_router.include_router(
     nutrition_router,
+)
+
+api_router.include_router(
+    weekly_plan_router,
+)
+
+api_router.include_router(
+    savings_router,
 )

@@ -1,32 +1,32 @@
 # TipidMeal Backend
 
-Backend API for **TipidMeal**, a mobile application that helps users discover affordable, personalized meals based on their budget, cooking skills, dietary restrictions, ingredient preferences, pantry availability, meal-planning needs, grocery requirements, saved favorites, and nutritional adequacy against Philippine dietary standards.
+Backend API for **TipidMeal**, a mobile application that helps users discover affordable, personalized meals based on their budget, cooking skills, dietary restrictions, ingredient preferences, pantry availability, meal-planning needs, grocery requirements, saved favorites, weekly meal plans, savings, and nutritional adequacy against Philippine dietary standards.
 
 Built with **FastAPI**, **SQLAlchemy 2.0**, **PostgreSQL (Supabase)**, **Supabase Auth**, and **Alembic**.
 
-> **Project status:** 🚧 In Development — **Week 8 (Nutrition) built and evaluated; ingredients normalized into a shared reference table; results pending final data verification** (see the Known gap under Meals and "Nutrition Methodology & Limitations").
+> **Project status:** 🚧 In Development: **Week 8 (Nutrition) built and evaluated; meal servings normalized to one serving; ingredients normalized into a shared reference table; Weekly Plan and Savings added.**
 
 ---
 
 ## 🚀 Tech Stack
 
-- **FastAPI** – REST API framework
-- **SQLAlchemy 2.0** – ORM
-- **PostgreSQL (Supabase)** – Database
-- **Supabase Auth** – User authentication
-- **Supabase Storage** – Profile image storage
-- **Pydantic v2** – Data validation
-- **JWT / JWKS** – Supabase access-token verification
-- **Alembic** – Database migrations
-- **python-jose** – JWT verification
-- **python-multipart** – Multipart/form-data parsing for image uploads
-- **tzdata** – IANA timezone database (required on Windows; see Installation)
+- **FastAPI**: REST API framework
+- **SQLAlchemy 2.0**: ORM
+- **PostgreSQL (Supabase)**: Database
+- **Supabase Auth**: User authentication
+- **Supabase Storage**: Profile image storage
+- **Pydantic v2**: Data validation
+- **JWT / JWKS**: Supabase access-token verification
+- **Alembic**: Database migrations
+- **python-jose**: JWT verification
+- **python-multipart**: Multipart/form-data parsing for image uploads
+- **tzdata**: IANA timezone database (required on Windows; see Installation)
 
 ---
 
 # 📁 Project Structure
 
-````text
+```text
 backend/
 │
 ├── app/
@@ -39,6 +39,7 @@ backend/
 │   ├── constants.py
 │   ├── database.py
 │   ├── dependencies.py
+│   ├── exceptions.py
 │   └── utils.py
 │
 ├── features/
@@ -50,7 +51,6 @@ backend/
 │   │   │   ├── food_allergy.py
 │   │   │   └── disliked_ingredient.py
 │   │   ├── schemas.py
-│   │   ├── repository.py
 │   │   ├── service.py
 │   │   └── router.py
 │   │
@@ -58,7 +58,9 @@ backend/
 │   │   ├── models/
 │   │   │   ├── __init__.py
 │   │   │   ├── ingredient.py
-│   │   │   └── ingredient_price.py
+│   │   │   ├── ingredient_price.py
+│   │   │   ├── allergen_category.py
+│   │   │   └── unit_conversion.py
 │   │   └── repository.py
 │   │
 │   ├── pantry/
@@ -98,6 +100,17 @@ backend/
 │   │   │   └── meal_plan_entry.py
 │   │   ├── schemas.py
 │   │   ├── repository.py
+│   │   ├── service.py
+│   │   └── router.py
+│   │
+│   ├── weekly_plan/
+│   │   ├── planner.py
+│   │   ├── schemas.py
+│   │   ├── service.py
+│   │   └── router.py
+│   │
+│   ├── savings/
+│   │   ├── schemas.py
 │   │   ├── service.py
 │   │   └── router.py
 │   │
@@ -142,17 +155,23 @@ backend/
 │   │   └── supabase_storage.py
 │   │
 │   ├── responses/
-│   │   └── base_response.py
+│   │   └── base_reponse.py
 │   │
 │   └── schemas/
 │       └── pagination.py
 │
-├── alembic/
-│   └── versions/
+├── migrations/
+│   ├── versions/
+│   └── env.py
 │
+├── tests/
+│   └── test_connection.py
+│
+├── alembic.ini
 ├── requirements.txt
+├── .env.example
 └── .env
-````
+```
 
 ---
 
@@ -162,7 +181,7 @@ The backend follows a feature-based layered architecture.
 
 For features that require database persistence:
 
-````text
+```text
 Router
    ↓
 Service
@@ -172,13 +191,13 @@ Repository
 SQLAlchemy Models
    ↓
 PostgreSQL
-````
+```
 
 The Grocery List feature is different because it is a **computed feature**.
 
 Instead of storing grocery-list records in a new database table, the grocery list is generated from existing application data:
 
-````text
+```text
 Router
    ↓
 Grocery List Service
@@ -186,11 +205,30 @@ Grocery List Service
 Meal Planner + Meals + Pantry + Ingredient Prices
    ↓
 Computed Grocery List (with pricing, where known)
-````
+```
 
-Favorites follows the standard persisted-feature pattern, structurally similar to Meal Planner — a join table between a user's profile and a meal, scoped by ownership:
+**Weekly Plan** and **Savings** are computed features too. Neither has a model or table of its own. A weekly plan draft is generated on request and is only persisted when the user accepts it, at which point it is written as ordinary Meal Planner entries. Savings is calculated on request from the Meal Planner and the user's budget:
 
-````text
+```text
+Weekly Plan                                     Savings
+-----------                                     -------
+Router                                          Router
+   ↓                                               ↓
+Weekly Plan Service                             Savings Service
+   ↓                                               ↓
+Planner (greedy selection)                      Meal Planner entries
+   ↓                                               +
+Recommendations candidates                      Profile budget per meal
+(affordability + allergy already applied)          ↓
+   ↓                                            Computed Savings Summary
+Draft (nothing stored)
+   ↓  accept
+Meal Planner entries
+```
+
+Favorites follows the standard persisted-feature pattern, structurally similar to Meal Planner: a join table between a user's profile and a meal, scoped by ownership:
+
+```text
 Router
    ↓
 Favorites Service
@@ -200,13 +238,13 @@ Favorites Repository
 Favorite Model
    ↓
 PostgreSQL
-````
+```
 
-**Ingredients is a shared reference module, not a standard CRUD feature.** It has models and a repository, but no router or service of its own — there is currently no `/ingredients` API endpoint. Other features (Meals, Pantry, Nutrition, Grocery List) query `Ingredient`, `IngredientFoodGroup`, and `IngredientPrice` directly through SQLAlchemy relationships. This is a deliberate architectural exception: ingredients are pure reference data consumed by several features, not something a client creates or lists directly (yet).
+**Ingredients is a shared reference module, not a standard CRUD feature.** It has models and a repository, but no router or service of its own: there is currently no `/ingredients` API endpoint. Other features (Meals, Pantry, Nutrition, Grocery List) query `Ingredient`, `IngredientFoodGroup`, and `IngredientPrice` directly through SQLAlchemy relationships. This is a deliberate architectural exception: ingredients are pure reference data consumed by several features, not something a client creates or lists directly (yet).
 
 Nutrition (Week 8) is also a **computed feature**. Nothing about a meal's adequacy is stored; it is calculated on request from the meal, the caller's profile, and a small static/reference data layer:
 
-````text
+```text
 Router
    ↓
 Nutrition Service
@@ -216,37 +254,39 @@ Meal + Profile + ingredient_food_groups (via Ingredient FK)
 features/nutrition/constants.py (PDRI, PAL, Pinggang Pinoy, conversions)
    ↓
 Computed Nutritional Adequacy
-````
+```
 
 Each major feature is isolated inside its own module.
 
 Current backend modules:
 
-````text
+```text
 Profiles
 Ingredients      (reference data only, no router)
 Pantry
 Meals
 Recommendations
 Meal Planner
+Weekly Plan
+Savings
 Grocery List
 Favorites
 Nutrition
-````
+```
 
-Shared functionality such as authentication, database configuration, storage, and common schemas is placed inside `shared/`. App-wide constants (e.g. timezone-sensitive cutoffs) live in `core/constants.py`, with small pure helper functions in `core/utils.py`. Nutrition's static reference data lives with the feature in `features/nutrition/constants.py`.
+Shared functionality such as authentication, database configuration, storage, and common schemas is placed inside `shared/`. App-wide constants (e.g. timezone-sensitive cutoffs and the meal slot list) live in `core/constants.py`, with small pure helper functions in `core/utils.py`. Nutrition's static reference data lives with the feature in `features/nutrition/constants.py`.
 
 ## Ingredient Normalization
 
-Ingredients were originally free-text strings duplicated across `meal_ingredients.ingredient`, `pantry_items.ingredient`, and `ingredient_food_groups.ingredient_name`. They are now normalized into one `ingredients` table (`id`, unique `name`), referenced by foreign key from `meal_ingredients`, `pantry_items`, `ingredient_food_groups`, and the new `ingredient_prices` table.
+Ingredients were originally free-text strings duplicated across `meal_ingredients.ingredient`, `pantry_items.ingredient`, and `ingredient_food_groups.ingredient_name`. They are now normalized into one `ingredients` table (`id`, unique `name`), referenced by foreign key from `meal_ingredients`, `pantry_items`, `ingredient_food_groups`, `ingredient_prices`, `ingredient_substitutions`, `disliked_ingredients`, and `allergen_categories`.
 
 To avoid touching every downstream call site (Recommendations, Grocery List, Nutrition all previously read `.ingredient` as a plain string), `MealIngredient` and `PantryItem` both expose a read-only `.ingredient` **property** that resolves through the relationship:
 
-````python
+```python
 @property
 def ingredient(self) -> str:
     return self.ingredient_ref.name
-````
+```
 
 This preserves the existing string-based contract everywhere else in the codebase while the actual storage is now relational. `ingredient_ref` uses `lazy="joined"` on both models, so reading `.ingredient` doesn't cause an N+1 query pattern.
 
@@ -270,7 +310,7 @@ The backend currently supports:
 
 Authentication flow:
 
-````text
+```text
 Supabase Auth
       ↓
 JWT Access Token
@@ -282,15 +322,15 @@ JWKS Public Key
 ES256 Verification
       ↓
 Authenticated Supabase User UUID
-````
+```
 
 The authenticated Supabase UUID is used as the identity source for application-level user data.
 
 Protected requests use:
 
-````text
+```text
 Authorization: Bearer <Supabase Access Token>
-````
+```
 
 ---
 
@@ -321,41 +361,43 @@ Implemented:
 * Profile image upload
 * Supabase Storage integration
 * Authenticated-user ownership
-* Physical activity level (Week 7 — see below)
+* Physical activity level (Week 7, see below)
 
 Profile architecture:
 
-````text
+```text
 Authenticated User
        ↓
 Profile
        ├── Food Allergies
        └── Disliked Ingredients
-````
+```
 
-The profile data is used by the recommendation system to personalize meal recommendations, and (as of Week 8) by the Nutrition module to determine each user's daily caloric requirement.
+The profile data is used by the recommendation system to personalize meal recommendations, by the Weekly Plan and Savings modules (budget per meal), and, as of Week 8, by the Nutrition module to determine each user's daily caloric requirement.
 
 ## Budget Per Meal (renamed, post-Week 7)
 
-The field originally named `daily_budget` was renamed to **`budget_per_meal`** — both the database column and every reference in code (schemas, repository, recommendation scoring, Flutter models/UI). The rename reflects how the value was already actually being used: `calculate_budget_score()` and the Week 7 affordability filter both compare a *single meal's* estimated cost directly against this number, not against a fraction of it — so "daily budget" was a misleading label for what was functionally a per-meal ceiling the whole time. No behavior changed; only the name, everywhere.
+The field originally named `daily_budget` was renamed to **`budget_per_meal`**: both the database column and every reference in code (schemas, service, recommendation scoring, Flutter models/UI). The rename reflects how the value was already actually being used: `calculate_budget_score()` and the Week 7 affordability filter both compare a *single meal's* estimated cost directly against this number, not against a fraction of it, so "daily budget" was a misleading label for what was functionally a per-meal ceiling the whole time. No behavior changed; only the name, everywhere.
 
-Migration: `c7d8e9f0a1b2_rename_daily_budget_to_budget_per_meal.py` — a plain `RENAME COLUMN`, so existing data is preserved.
+Migration: `c7d8e9f0a1b2_rename_daily_budget_to_budget_per_meal.py`, a plain `RENAME COLUMN`, so existing data is preserved.
+
+Weekly Plan and Savings both build on this value: the weekly plan's budget total is `budget_per_meal` multiplied by the number of planned slots, and Savings compares each day's planned meal costs against `budget_per_meal` multiplied by that day's planned meals.
 
 ## Physical Activity Level (Week 7)
 
 A `physical_activity_level` column was added to `Profile` as groundwork for Week 8's Nutrition feature (PDRI-based caloric bracket calculation).
 
-- **Enum:** `sedentary`, `moderately_active`, `active` — a 3-category scheme matching the PDRI's own activity classification.
-- **Required on profile creation.** `ProfileCreate.physical_activity_level` has no default and is not `Optional` — every new profile must specify it. This is a deliberate product decision made during implementation.
-- The database column itself is nullable (`String(50)`, `nullable=True`) purely so pre-existing profiles created before this migration don't violate a NOT NULL constraint retroactively — but the API enforces it as required for any newly-created profile going forward. `ProfileUpdate` and `ProfileResponse` keep it optional so partial updates and pre-Week-7 rows still round-trip correctly.
+- **Enum:** `sedentary`, `moderately_active`, `active`: a 3-category scheme matching the PDRI's own activity classification.
+- **Required on profile creation.** `ProfileCreate.physical_activity_level` has no default and is not `Optional`: every new profile must specify it. This is a deliberate product decision made during implementation.
+- The database column itself is nullable (`String(50)`, `nullable=True`) purely so pre-existing profiles created before this migration don't violate a NOT NULL constraint retroactively, but the API enforces it as required for any newly-created profile going forward. `ProfileUpdate` and `ProfileResponse` keep it optional so partial updates and pre-Week-7 rows still round-trip correctly.
 - Migration: `aa4a5f458607_add_physical_activity_level_to_profiles.py`.
-- **Used by the Nutrition module (Week 8)** to scale the PDRI energy requirement for activity level (see Nutrition Module below). It is **not** used in recommendation scoring — the hybrid score is unchanged (Coverage/Budget/Skill/Allergy/Disliked, see Recommendation Scoring below).
+- **Used by the Nutrition module (Week 8)** to scale the PDRI energy requirement for activity level (see Nutrition Module below). It is **not** used in recommendation scoring: the hybrid score is unchanged (Coverage/Budget/Skill/Allergy/Disliked, see Recommendation Scoring below).
 
 ---
 
 # 🧂 Ingredients Module (reference data)
 
-A shared, normalized ingredient vocabulary consumed by Meals, Pantry, Nutrition, and Grocery List. No dedicated API router exists yet — this is queried internally, not exposed as its own CRUD endpoint.
+A shared, normalized ingredient vocabulary consumed by Meals, Pantry, Recommendations, Nutrition, and Grocery List. No dedicated API router exists yet: this is queried internally, not exposed as its own CRUD endpoint.
 
 ## `ingredients`
 
@@ -366,30 +408,68 @@ A shared, normalized ingredient vocabulary consumed by Meals, Pantry, Nutrition,
 
 ## `ingredient_prices`
 
-Optional per-unit price for an ingredient, feeding Grocery List's cost estimate.
+Optional per-unit price for an ingredient, feeding Grocery List's cost estimate. Created by migration `g5b6c7d8e9f0`, with creation and update timestamps added by `l0a1b2c3d4e5`.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | UUID | Primary key |
-| `ingredient_id` | UUID | FK → `ingredients.id` |
+| `ingredient_id` | UUID | FK to `ingredients.id` |
 | `unit` | String(50) | e.g. `g`, `pcs`, `cup` |
 | `price_per_unit` | Numeric(10,2) | ₱ per one unit |
 
-Unique on `(ingredient_id, unit)` — an ingredient can have a different price per unit it's sold in (e.g. price per `g` vs. price per `pcs`), but not two prices for the same unit.
+Unique on `(ingredient_id, unit)`: an ingredient can have a different price per unit it's sold in (e.g. price per `g` vs. price per `pcs`), but not two prices for the same unit.
 
-> ⚠️ **Seed status unconfirmed.** Whether `ingredient_prices` has been populated with real data isn't something I've verified. If it's empty, Grocery List's pricing feature is present in code but every item will show `estimated_cost: null` until prices are added — functionally identical to before pricing existed. Confirm seed data exists (or add it) before relying on grocery list totals for anything user-facing.
+> ⚠️ **Not yet seeded.** The `ingredient_prices` table exists and the Grocery List pricing code is in place, but the table has not been populated with data yet. Until prices are added, every grocery list item returns `estimated_cost: null` and `total_estimated_cost` is `null`, which is functionally identical to before pricing existed. Seed the table (with real, sourced prices where possible, e.g. DTI price monitoring) before relying on grocery list totals for anything user-facing.
 
-## Ingredient → Food Group linkage (Week 8, updated)
+## `allergen_categories`
+
+Maps an allergen category to the ingredients that belong to it. Created by migration `m1a2b3c4d5e6`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key |
+| `category` | String(50) | Allergen category name, indexed |
+| `ingredient_id` | UUID | FK to `ingredients.id`, indexed, eager-loaded (`lazy="joined"`) |
+
+Unique on `(category, ingredient_id)`, so an ingredient cannot be listed twice under the same category.
+
+## `unit_conversions`
+
+Reference table of conversion factors between units.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key |
+| `from_unit` | String(20) | Unit being converted from |
+| `to_unit` | String(20) | Unit being converted to |
+| `factor` | Numeric(18,6) | Multiplier from `from_unit` to `to_unit` |
+
+Unique on `(from_unit, to_unit)`.
+
+## Unit normalization
+
+Migration `n2b3c4d5e6f7_merge_pc_into_pcs` merges the `pc` unit into `pcs`, so piece-counted ingredients use one canonical spelling and exact `(ingredient, unit)` matching across Pantry, Recommendations, and Grocery List no longer splits on it.
+
+## Ingredient to Food Group linkage (Week 8, updated)
 
 `ingredient_food_groups` originally joined to ingredients by matching a free-text `ingredient_name` string. It's now a proper foreign key to `ingredients.id`:
 
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | UUID | Primary key |
-| `ingredient_id` | UUID | FK → `ingredients.id`, unique (at most one food-group row per ingredient) |
+| `ingredient_id` | UUID | FK to `ingredients.id`, unique (at most one food-group row per ingredient) |
 | `food_group` | String(20) | `go`, `grow`, `glow`, or `other` |
 
 Migration `h6c7d8e9f0a1` performed this conversion: added the new FK column, backfilled it by matching `lower(trim(name))` against the old `ingredient_name` string, **failed loudly** (raised an exception) if any row couldn't be matched rather than silently leaving orphaned rows, then dropped the old `ingredient_name` column entirely. It also added food-group rows for four ingredients that had none (`milk`, `evaporated_milk` → grow; `butter`, `margarine` → other).
+
+## Other ingredient links
+
+Two more tables that used free-text ingredient names now reference `ingredients.id` by foreign key:
+
+- `ingredient_substitutions`: migration `j8e9f0a1b2c3_link_ingredient_substitutions_to_ingredients`
+- `disliked_ingredients`: migration `k9f0a1b2c3d4_link_disliked_ingredients_to_ingredients`
+
+Migration `i7d8e9f0a1b2_add_check_constraints` also adds database-level CHECK constraints.
 
 ---
 
@@ -399,12 +479,12 @@ The pantry module represents ingredients currently available to an authenticated
 
 Example:
 
-````text
+```text
 Rice        2 kg
 Chicken     1 kg
 Eggs        6 pcs
 Tomato      4 pcs
-````
+```
 
 Each pantry item belongs to a user's application profile.
 
@@ -426,7 +506,7 @@ Implemented:
 
 Pantry architecture:
 
-````text
+```text
 Authenticated User
        ↓
 Profile
@@ -434,7 +514,7 @@ Profile
 Pantry Items (ingredient_id → Ingredient)
        ↓
 PostgreSQL
-````
+```
 
 `PantryItem.ingredient` is now a read-only property resolving `ingredient_id` through the `Ingredient` relationship (see "Ingredient Normalization" above), not a stored string column. Existing update logic for changing a pantry item's ingredient is handled explicitly in `repository.update_pantry_item()` rather than generic `setattr`, since the property itself can't be assigned to directly.
 
@@ -442,17 +522,17 @@ PostgreSQL
 
 Pantry availability is represented using:
 
-````text
+```text
 Ingredient
     ↓
 Unit
     ↓
 Quantity
-````
+```
 
 Example:
 
-````python
+```python
 {
     "rice": {
         "kg": 2
@@ -464,30 +544,30 @@ Example:
         "pcs": 4
     }
 }
-````
+```
 
 Multiple pantry entries for the same ingredient and unit can be combined.
 
 For example:
 
-````text
+```text
 Rice
 2 kg
 +
 1 kg
 =
 3 kg
-````
+```
 
 Different units are kept separately.
 
 For example:
 
-````text
+```text
 Rice
 kg → 2
 g  → 500
-````
+```
 
 The backend does not currently perform automatic unit conversion.
 
@@ -512,13 +592,13 @@ Meals contain related ingredients and cooking instructions.
 
 Relationship:
 
-````text
+```text
 Meal
  │
  ├── Meal Ingredients (ingredient_id → Ingredient)
  │
  └── Meal Instructions
-````
+```
 
 Implemented:
 
@@ -535,7 +615,7 @@ Implemented:
 * Instruction relationships
 * Ingredient suggestion search
 
-`Meal.estimated_cost` is stored as `Numeric(10, 2)` (not `Float`), and the Pydantic schemas type it as `Decimal` end-to-end — this avoids floating-point rounding artifacts at the source, rather than only masking them at display time. See "Peso Precision (Week 7)" under the Meal Planner Module below.
+`Meal.estimated_cost` is stored as `Numeric(10, 2)` (not `Float`), and the Pydantic schemas type it as `Decimal` end-to-end. This avoids floating-point rounding artifacts at the source, rather than only masking them at display time. See "Peso Precision (Week 7)" under the Meal Planner Module below.
 
 `Meal.difficulty` is a free `String(50)` with no enum constraint at the database level. The recommendation engine's skill-scoring table (see Recommendation Scoring below) expects exactly `easy`, `medium`, or `hard` (case-insensitive); any other value would score `0.0` regardless of the user's skill level, since it wouldn't match a key in the compatibility table. All 20 currently seeded meals were checked and confirmed to use exactly one of these three values (Week 7, Day 3).
 
@@ -543,7 +623,11 @@ Implemented:
 
 Like Pantry, `MealIngredient.ingredient` is now a read-only property resolving through `ingredient_id → Ingredient.name`, not a stored string.
 
-> ⚠️ **Known gap (Week 7, Day 4 — not yet done):** `Meal.servings` and the associated ingredient quantities/cost/calories in the current seed data are **sample data** and have not yet been normalized to represent exactly 1 serving. Because the Nutrition caloric check depends on `Meal.calories`, the nutritional-adequacy figures should be treated as provisional until this is done.
+## Servings Normalization (done)
+
+`Meal.servings` and the associated ingredient quantities, cost, and calories for the seeded meals have been normalized to represent exactly **one serving**. The normalization was applied by migration `38c3de426422_normalize_meal_servings_to_one_serving_`, and `servings_normalization_review.csv` in the project root holds the review of that work.
+
+Because Nutrition (caloric adequacy), Grocery List (quantities and cost), Savings (meal cost against budget), and Weekly Plan (meal cost against budget) all depend on these values, they now work from a per-serving baseline instead of the earlier sample data.
 
 ---
 
@@ -553,9 +637,9 @@ The Meals module provides ingredient autocomplete functionality.
 
 Endpoint:
 
-````text
+```text
 GET /api/v1/meals/ingredients/suggestions?search=tom
-````
+```
 
 The endpoint:
 
@@ -567,13 +651,13 @@ The endpoint:
 
 Example response:
 
-````json
+```json
 [
   "Tomato",
   "Tomato Paste",
   "Tomato Sauce"
 ]
-````
+```
 
 ---
 
@@ -585,7 +669,7 @@ No external AI API is required for the current recommendation engine.
 
 The recommendation pipeline is:
 
-````text
+```text
 Profile
    +
 Pantry
@@ -594,7 +678,7 @@ Meals
    +
 Recommendation Rules
    ↓
-Affordability Filter (hard — Week 7)
+Affordability Filter (hard, Week 7)
    ↓
 Ingredient Adaptation
    ↓
@@ -605,7 +689,7 @@ Allergy Filter (hard)
 Ranking / Sort
    ↓
 Recommended Meals
-````
+```
 
 Recommendations consider:
 
@@ -620,13 +704,15 @@ Recommendations consider:
 * Disliked ingredients
 * Ingredient coverage
 
-**Week 8:** the recommendation response is also extended with each meal's nutritional-adequacy result (see Nutrition Module below), so the Flutter client can show a nutrition badge on recommendation cards. This is informational — the hybrid score weights and the ranking rules below are unchanged.
+**Week 8:** the recommendation response is also extended with each meal's nutritional-adequacy result (see Nutrition Module below), so the Flutter client can show a nutrition badge on recommendation cards. This is informational: the hybrid score weights and the ranking rules below are unchanged.
 
-## Affordability (Week 7 — hard filter)
+The same candidate pool (`calculate_meal_coverage`) is reused by the Weekly Plan module, so a weekly plan inherits the affordability filter, the allergy exclusion, and the hybrid score without re-implementing any of them.
 
-As of Week 7, any meal whose `estimated_cost` exceeds the user's `budget_per_meal` is excluded from the recommendation list entirely, before ingredient adaptation, coverage, or scoring are calculated. This is a deliberate product decision made during implementation, stricter than the system's original design, in which Budget Compatibility was only a 30%-weighted *scored* factor (see Recommendation Scoring below) rather than a pass/fail gate. The 30% weight still differentiates among the meals that pass this gate — it just no longer decides, on its own, whether an over-budget meal can appear at all.
+## Affordability (Week 7, hard filter)
 
-One practical effect: `calculate_budget_score()`'s two lowest tiers (`ratio 1.00–1.25 → 0.50` and `ratio > 1.25 → 0.00`) can no longer be reached in production, since anything with `ratio > 1.00` is already excluded upstream by this filter.
+As of Week 7, any meal whose `estimated_cost` exceeds the user's `budget_per_meal` is excluded from the recommendation list entirely, before ingredient adaptation, coverage, or scoring are calculated. This is a deliberate product decision made during implementation, stricter than the system's original design, in which Budget Compatibility was only a 30%-weighted *scored* factor (see Recommendation Scoring below) rather than a pass/fail gate. The 30% weight still differentiates among the meals that pass this gate: it just no longer decides, on its own, whether an over-budget meal can appear at all.
+
+One practical effect: `calculate_budget_score()`'s two lowest tiers (`ratio 1.00 to 1.25 → 0.50` and `ratio > 1.25 → 0.00`) can no longer be reached in production, since anything with `ratio > 1.00` is already excluded upstream by this filter.
 
 ---
 
@@ -642,15 +728,15 @@ The current hybrid scoring system uses:
 | Allergy Compatibility |    20% |
 | Disliked Ingredients  |    10% |
 
-This weighting applies only to meals that already pass the Week 7 affordability hard filter above — Budget Compatibility's 30% now differentiates *among* affordable meals rather than being the sole signal keeping over-budget meals out.
+This weighting applies only to meals that already pass the Week 7 affordability hard filter above. Budget Compatibility's 30% now differentiates *among* affordable meals rather than being the sole signal keeping over-budget meals out.
 
 Allergy conflicts are treated as hard restrictions.
 
 A meal containing an allergy conflict receives:
 
-````text
+```text
 score = 0
-````
+```
 
 and is excluded from the response entirely.
 
@@ -660,15 +746,15 @@ The recommendation system is deterministic and explainable, which is useful for 
 
 `GET /api/v1/recommendations` accepts an optional `sort_by` query parameter:
 
-````text
+```text
 GET /api/v1/recommendations?sort_by=score   (default)
 GET /api/v1/recommendations?sort_by=cost
-````
+```
 
 - **`sort_by=score`** (default): meals are tiered by pantry-adaptation decision (`adapt` before `fallback`), then ordered by hybrid score descending within each tier.
 - **`sort_by=cost`**: meals are ordered by `estimated_cost` ascending, with hybrid score descending as a tiebreaker. Pantry-adaptation tiering is not applied in this mode.
-- In both modes, the affordability and allergy hard filters above are applied identically first — `sort_by` only changes ordering among meals that already qualify.
-- Verification method: manual testing through the app and Swagger against the 20 seeded meals, not an automated test suite — no unit tests currently exist for `scoring.py`.
+- In both modes, the affordability and allergy hard filters above are applied identically first: `sort_by` only changes ordering among meals that already qualify.
+- Verification method: manual testing through the app and Swagger against the 20 seeded meals, not an automated test suite. No unit tests currently exist for `scoring.py`.
 
 ## Cooking Skill Scoring (verified, Week 7)
 
@@ -682,9 +768,9 @@ Skill compatibility uses a fixed table, not a linear formula:
 
 This was manually verified against all 20 seeded meals to confirm:
 - A skill mismatch degrades the score smoothly rather than zeroing it out.
-- Beginner+Hard (0.20) scores lower than Beginner+Medium (0.60), which scores lower than Beginner+Easy (1.00) — the gap is proportionate to how far apart the levels are, not just "match vs. no match."
+- Beginner+Hard (0.20) scores lower than Beginner+Medium (0.60), which scores lower than Beginner+Easy (1.00): the gap is proportionate to how far apart the levels are, not just "match vs. no match."
 - An Advanced-skill user is never penalized for any difficulty, including Easy meals.
-- Skill mismatch only reduces score when the meal is *harder* than the user's skill — never when it's easier.
+- Skill mismatch only reduces score when the meal is *harder* than the user's skill, never when it's easier.
 
 All 20 seeded `Meal.difficulty` values were confirmed to be exactly `easy`, `medium`, or `hard` (case-insensitive), so no meal silently falls outside this table.
 
@@ -696,20 +782,20 @@ The recommendation system can adapt meal ingredients based on pantry availabilit
 
 An ingredient can be classified as:
 
-````text
+```text
 retain
 substitute
 insufficient
 omit
 unavailable
-````
+```
 
 Meals are classified as either:
 
-````text
+```text
 adapt
 fallback
-````
+```
 
 **Week 7 change:** `fallback` meals are no longer excluded from the recommendation response. They are still returned to the client, just tiered *after* `adapt` meals under the default `sort_by=score` ordering (see Cost-Based Sort above). This differs from the feature's original design.
 
@@ -721,7 +807,7 @@ If the pantry and recipe units match, the backend compares quantities.
 
 Example:
 
-````text
+```text
 Required:
 Rice → 500 g
 
@@ -730,7 +816,7 @@ Rice → 1 kg
 
 Result:
 retain
-````
+```
 
 ---
 
@@ -744,7 +830,7 @@ An ingredient is classified as insufficient when:
 
 Example:
 
-````text
+```text
 Required:
 Rice → 1 kg
 
@@ -753,11 +839,11 @@ Rice → 500 g
 
 Result:
 insufficient
-````
+```
 
 Example response:
 
-````json
+```json
 {
   "ingredient": "Rice",
   "action": "insufficient",
@@ -765,7 +851,7 @@ Example response:
   "required_quantity": 1000,
   "unit": "g"
 }
-````
+```
 
 An insufficient ingredient is treated as a soft warning rather than automatically making the meal a fallback candidate.
 
@@ -777,13 +863,13 @@ The backend does not currently perform automatic unit conversion.
 
 Example:
 
-````text
+```text
 Pantry:
 Rice → 1 kg
 
 Recipe:
 Rice → 500 g
-````
+```
 
 Because the units differ, the backend does not attempt to perform an unsafe quantity comparison.
 
@@ -798,7 +884,7 @@ An ingredient is classified as unavailable when:
 * It is not present in the pantry.
 * No valid substitution is available.
 
-Unavailable required ingredients can cause a meal to become a `fallback` candidate — which, as of Week 7, is still returned to the client rather than filtered out (see above).
+Unavailable required ingredients can cause a meal to become a `fallback` candidate, which, as of Week 7, is still returned to the client rather than filtered out (see above).
 
 ---
 
@@ -808,7 +894,7 @@ Ingredient substitution rules are stored in the database.
 
 Example:
 
-````text
+```text
 milk
   ↓
 evaporated_milk
@@ -816,19 +902,19 @@ evaporated_milk
 butter
   ↓
 margarine
-````
+```
 
 The substitution system allows the recommendation engine to determine whether an unavailable ingredient can be replaced with another available ingredient.
 
 The database contains an:
 
-````text
+```text
 ingredient_substitutions
-````
+```
 
 table.
 
-> Note: this table still stores ingredient names as free text (`ingredient`, `substitute` columns) — it was not part of the ingredients-normalization refactor. It's a separate, independent table from `ingredients`/`ingredient_food_groups`/`ingredient_prices`.
+> Note: this table is now linked to the shared `ingredients` table by foreign key (migration `j8e9f0a1b2c3`), the same way meal ingredients, pantry items, food groups, prices, and disliked ingredients are.
 
 ---
 
@@ -850,13 +936,13 @@ The Meal Planner allows authenticated users to schedule meals for specific dates
 
 Each meal plan entry connects:
 
-````text
+```text
 Profile
    ↓
 Meal Plan Entry
    ↓
 Meal
-````
+```
 
 A meal plan entry contains:
 
@@ -868,7 +954,7 @@ A meal plan entry contains:
 
 Example:
 
-````text
+```text
 August 18, 2026
 
 Breakfast
@@ -882,20 +968,20 @@ Chicken Adobo
 Dinner
     ↓
 Vegetable Stir Fry
-````
+```
 
 The database model is:
 
-````text
+```text
 meal_plan_entries
-````
+```
 
 with relationships to:
 
-````text
+```text
 profiles
 meals
-````
+```
 
 The profile relationship uses cascading deletion, while meal deletion is restricted when referenced by a meal-plan entry.
 
@@ -929,8 +1015,8 @@ A meal plan entry cannot be created or moved into a date/slot that has already p
   | Lunch     | 2:00 PM  |
   | Dinner    | 9:00 PM  |
 
-- Cutoff constants live in `core/constants.py`; the check itself is `core/utils.is_planned_slot_in_past()`, called from `service.create_meal_plan_entry()` and `service.update_meal_plan_entry()`.
-- Editing an already-past entry without changing its date/slot is still allowed — only a move *into* a past date/slot is rejected.
+- Cutoff constants live in `core/constants.py` (`MEAL_SLOT_CUTOFFS`); the check itself is `core/utils.is_planned_slot_in_past()`, called from `service.create_meal_plan_entry()` and `service.update_meal_plan_entry()`. Weekly Plan reuses the same check.
+- Editing an already-past entry without changing its date/slot is still allowed: only a move *into* a past date/slot is rejected.
 - Rejected requests return `400` with `{"detail": "Cannot add a meal to a slot that has already passed"}`.
 
 ## Peso Precision (Week 7)
@@ -939,15 +1025,312 @@ A meal plan entry cannot be created or moved into a date/slot that has already p
 
 ---
 
+# 🗓️ Weekly Plan Module
+
+The Weekly Plan module generates a draft meal plan for up to a week, lets the client review and swap meals, and then saves the accepted draft into the Meal Planner.
+
+It is a **computed feature**: there is no `weekly_plan` table. A draft exists only in the API response until the user accepts it, at which point each entry is written as a normal `meal_plan_entries` row through the Meal Planner service.
+
+```text
+POST /weekly-plan/generate
+      ↓
+Candidates (recommendations: affordability + allergy already applied)
+      ↓
+Greedy selection per slot, with variety rules
+      ↓
+Draft (slots + alternatives + cost/budget/savings totals)
+      ↓
+Client reviews / swaps meals
+      ↓
+POST /weekly-plan/accept
+      ↓
+Meal Planner entries
+```
+
+The feature structure is:
+
+```text
+features/
+└── weekly_plan/
+    ├── planner.py     (selection algorithm)
+    ├── schemas.py
+    ├── service.py
+    └── router.py
+```
+
+## Generating a Draft
+
+`POST /api/v1/weekly-plan/generate` accepts:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `start_date` | date, optional | The client sends its local date so "today" is correct for the user. Defaults to today in the app's timezone (`get_app_now()`), not the server clock |
+| `days` | int, 1 to 7 | Defaults to `7` |
+| `seed` | int, optional | Makes a draft reproducible (useful for testing) |
+
+Example request:
+
+```json
+{
+  "start_date": "2026-11-16",
+  "days": 7
+}
+```
+
+The draft covers `start_date` through `start_date + days - 1`.
+
+### Candidate pool
+
+The candidates come from `calculate_meal_coverage()`, the same function behind the Recommendations module, so every candidate already:
+
+* Fits the user's `budget_per_meal` (affordability hard filter)
+* Is free of the user's food allergies (allergy hard filter)
+* Carries a hybrid score and a pantry decision (`adapt` or `fallback`)
+
+Staple meals (see Nutrition below, e.g. Garlic Fried Rice) are removed from the pool, because they are not ulam and are not planned as a meal on their own.
+
+### Selection algorithm
+
+For each date in order, and each slot in `breakfast`, `lunch`, `dinner` (the slot list comes from `MEAL_SLOT_CUTOFFS` in `core/constants.py`), the planner picks the highest-scoring candidate that passes the variety rules. Slots that have already passed today are skipped (`is_planned_slot_in_past`).
+
+Variety rules (`features/weekly_plan/planner.py`):
+
+| Constant | Value | Meaning |
+|----------|------:|---------|
+| `MAX_USES_PER_WEEK` | 2 | A meal appears at most twice in a plan |
+| `MIN_GAP_DAYS` | 2 | The same meal is not repeated within 2 days |
+| `JITTER` | 0.05 | A small random nudge added to each score, so regenerating gives a different plan |
+| `ALTERNATIVES_LIMIT` | 12 | Size of the swap pool |
+
+The rules relax step by step, only when the pool is too small to satisfy them:
+
+```text
+Level 0: under the weekly cap AND at least MIN_GAP_DAYS since last use
+Level 1: under the weekly cap, just not the same day
+Level 2: not the same day
+Level 3: anything
+```
+
+If a slot cannot be filled even at level 3, it is left empty.
+
+### Response
+
+```json
+{
+  "start_date": "2026-11-16",
+  "end_date": "2026-11-22",
+  "budget_per_meal": 100.00,
+  "slots": [
+    {
+      "planned_date": "2026-11-16",
+      "meal_slot": "dinner",
+      "meal": { "id": "…", "name": "Chicken Adobo", "estimated_cost": 85.00, "image_url": null },
+      "hybrid_score": 0.87,
+      "coverage": 0.8,
+      "pantry_decision": "adapt"
+    }
+  ],
+  "alternatives": [
+    {
+      "meal": { "id": "…", "name": "Pinakbet", "estimated_cost": 70.00, "image_url": null },
+      "hybrid_score": 0.82,
+      "pantry_decision": "adapt"
+    }
+  ],
+  "estimated_cost_total": 1190.00,
+  "budget_total": 2100.00,
+  "estimated_savings": 910.00
+}
+```
+
+* `slots`: the planned meals, each with its hybrid score, ingredient coverage, and pantry decision (`adapt` or `fallback`).
+* `alternatives`: the top 12 candidates by hybrid score, the pool the app uses for "swap this meal".
+* `budget_total` is `budget_per_meal` multiplied by the number of planned slots, `estimated_cost_total` is the sum of the slots' meal costs, and `estimated_savings` is `budget_total - estimated_cost_total`.
+
+### Errors
+
+| Status | Detail | When |
+|--------|--------|------|
+| 404 | `Profile not found` | The user has no profile |
+| 404 | `No meals match your budget and food restrictions.` | The candidate pool is empty |
+| 400 | `No upcoming meal slots left in this date range.` | Every slot in the range has already passed |
+
+## Accepting a Draft
+
+`POST /api/v1/weekly-plan/accept` saves the reviewed plan into the Meal Planner.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `entries` | list of meal plan entries, 1 to 21 | Each has `meal_id`, `planned_date`, and `meal_slot` (the same shape as creating a Meal Planner entry) |
+| `replace_existing` | bool | Defaults to `false` |
+
+Example request:
+
+```json
+{
+  "entries": [
+    { "meal_id": "…", "planned_date": "2026-11-16", "meal_slot": "dinner" }
+  ],
+  "replace_existing": false
+}
+```
+
+Everything is **validated before anything is written**:
+
+* Two entries in the same date and slot → `400` `The plan has two meals in the same slot.`
+* An entry in a slot that has already passed → `400` `The plan contains a slot that has already passed.`
+* A `meal_id` that does not exist → `404` `A meal in the plan was not found.`
+
+Existing Meal Planner entries in the same date range are then checked:
+
+* With `replace_existing: false` (the default), a slot the user already filled is **skipped**, never overwritten.
+* With `replace_existing: true`, the existing entries in that slot are deleted and replaced by the accepted entry.
+
+Response (`201 Created`):
+
+```json
+{
+  "saved_count": 20,
+  "skipped_count": 1
+}
+```
+
+The accepted entries are ordinary Meal Planner entries, so they flow straight into the Grocery List and Savings.
+
+---
+
+# 💰 Savings Module
+
+The Savings module answers one question: based on the meals the user has planned, will they come in under budget? It compares the estimated cost of planned meals against the user's `budget_per_meal` for the current week or the current month.
+
+Savings is a **computed feature**: nothing is stored. The summary is calculated on every request from the user's Meal Planner entries and profile.
+
+```text
+Meal Plan Entries (period)
+        +
+Meal estimated costs
+        +
+Profile budget per meal
+        ↓
+Savings Summary
+```
+
+The feature structure is:
+
+```text
+features/
+└── savings/
+    ├── schemas.py
+    ├── service.py
+    └── router.py
+```
+
+## Endpoint
+
+```text
+GET /api/v1/savings/summary?period=week
+GET /api/v1/savings/summary?period=month
+```
+
+`period` is `week` (default) or `month`. Returns `404` `Profile not found` if the user has no profile.
+
+## Period Range
+
+"Today" is taken in the app's timezone (`get_app_now()`), not the server clock.
+
+| Period | Range |
+|--------|-------|
+| `week` | Monday to Sunday of the current week (same as the Meal Planner) |
+| `month` | First to last day of the current month |
+
+The range includes days that are already past and days still to come: every planned entry in the range counts.
+
+## Calculation
+
+```text
+budget_total    = budget_per_meal x number of planned meals
+cost_total      = sum of the planned meals' estimated costs
+total_savings   = budget_total - cost_total
+savings_percent = total_savings / budget_total x 100   (0 if budget_total is 0)
+```
+
+The budget only counts meals the user actually planned. A day with no planned meals contributes `0` to both the budget and the cost.
+
+### Verdict
+
+```text
+|total_savings| <= 5% of budget_total   →  on_budget
+total_savings > 0                        →  saving
+otherwise                                →  over_budget
+```
+
+The 5% band (`ON_BUDGET_MARGIN`) keeps tiny differences from flipping the verdict. With no planned meals, `budget_total` is `0`, so the verdict is `on_budget` and the client shows its empty state.
+
+### Daily breakdown
+
+`daily` contains one entry for every day in the period (days with no meals included):
+
+```json
+{
+  "date": "2026-11-16",
+  "planned_meals": 3,
+  "estimated_cost": 240.00,
+  "budget": 300.00,
+  "savings": 60.00
+}
+```
+
+### Projection
+
+The projection is an **estimate** of the savings if the user planned every meal slot in the period like the meals already planned:
+
+```text
+average saving per planned meal x (3 meals per day x days in the period)
+```
+
+* `MEALS_PER_DAY` is the number of slots in `MEAL_SLOT_CUTOFFS` (breakfast, lunch, dinner = 3).
+* It is only calculated when at least `MIN_MEALS_FOR_PROJECTION` (3) meals are planned; otherwise `projection` is `null`.
+
+### Response
+
+```json
+{
+  "period": "week",
+  "start_date": "2026-11-16",
+  "end_date": "2026-11-22",
+  "budget_per_meal": 100.00,
+  "planned_meals": 9,
+  "estimated_cost_total": 760.00,
+  "budget_total": 900.00,
+  "total_savings": 140.00,
+  "savings_percent": 15.6,
+  "verdict": "saving",
+  "daily": [ /* one entry per day in the period */ ],
+  "projection": {
+    "days": 7,
+    "meals": 21,
+    "projected_savings": 326.67
+  }
+}
+```
+
+All money values are quantized to 2 decimal places (`ROUND_HALF_UP`), and `savings_percent` is rounded to 1 decimal place.
+
+### Limitation
+
+Savings are based on each meal's **estimated** cost, not real receipts or actual spending, so the figures are only as accurate as the meal cost data.
+
+---
+
 # 🛒 Grocery List Module
 
-The Grocery List is a **derived feature** that converts a user's meal plan into a list of ingredients that need to be purchased — and, where pricing data is available, estimates what buying them will cost.
+The Grocery List is a **derived feature** that converts a user's meal plan into a list of ingredients that need to be purchased and, where pricing data is available, estimates what buying them will cost.
 
-The feature connects the Meal Planner, Meals, Pantry, and (as of this update) Ingredient Prices modules.
+The feature connects the Meal Planner, Meals, Pantry, and Ingredient Prices modules.
 
 The overall flow is:
 
-````text
+```text
 Meal Plan
      ↓
 Planned Meals
@@ -965,9 +1348,9 @@ Remaining Quantity
 Price Lookup (per ingredient + unit, where known)
      ↓
 Grocery List (with estimated cost per item + total)
-````
+```
 
-The Grocery List does **not** introduce a new SQLAlchemy model or database table of its own. Instead, the list is computed whenever the endpoint is requested, using `meal_plan_entries`, `meal_ingredients`, `pantry_items`, and — for pricing — `ingredient_prices`.
+The Grocery List does **not** introduce a new SQLAlchemy model or database table of its own. Instead, the list is computed whenever the endpoint is requested, using `meal_plan_entries`, `meal_ingredients`, `pantry_items`, and, for pricing, `ingredient_prices`.
 
 This keeps the grocery list synchronized with the latest:
 
@@ -982,7 +1365,7 @@ This keeps the grocery list synchronized with the latest:
 
 Unlike database-backed CRUD features, Grocery List uses a lightweight computed architecture:
 
-````text
+```text
 Authenticated User
        ↓
 Profile
@@ -998,17 +1381,17 @@ Grocery List Service ── Ingredient Prices
 Pantry
        ↓
 Computed Grocery List
-````
+```
 
 The feature structure is:
 
-````text
+```text
 features/
 └── grocery_list/
     ├── schemas.py
     ├── service.py
     └── router.py
-````
+```
 
 No `models/` directory is required for the current computed-only implementation.
 
@@ -1024,14 +1407,14 @@ The service retrieves the authenticated user's planned meals for the requested d
 
 Example:
 
-````text
+```text
 Monday
   Breakfast → Oatmeal
   Lunch     → Chicken Adobo
 
 Tuesday
   Dinner    → Chicken Adobo
-````
+```
 
 ---
 
@@ -1041,7 +1424,7 @@ The ingredients of all planned meals are collected.
 
 Example:
 
-````text
+```text
 Oatmeal:
 - Oats       100 g
 - Milk       200 ml
@@ -1055,7 +1438,7 @@ Chicken Adobo:
 - Chicken    500 g
 - Soy Sauce  50 ml
 - Vinegar    50 ml
-````
+```
 
 ---
 
@@ -1065,34 +1448,34 @@ Ingredients with the same normalized ingredient name and unit are combined.
 
 Example:
 
-````text
+```text
 Chicken
 500 g
 +
 500 g
 =
 1000 g
-````
+```
 
 Similarly:
 
-````text
+```text
 Soy Sauce
 50 ml
 +
 50 ml
 =
 100 ml
-````
+```
 
 The Grocery List does not combine ingredients with different units.
 
 Example:
 
-````text
+```text
 Rice → 1 kg
 Rice → 500 g
-````
+```
 
 These remain separate because the backend does not currently perform automatic unit conversion.
 
@@ -1104,26 +1487,26 @@ The aggregated requirements are compared against the user's current pantry.
 
 Example:
 
-````text
+```text
 Required:
 Rice → 2 kg
 
 Pantry:
 Rice → 1 kg
-````
+```
 
 The remaining quantity is:
 
-````text
+```text
 1 kg
-````
+```
 
 Therefore:
 
-````text
+```text
 Grocery List:
 Rice → 1 kg
-````
+```
 
 ---
 
@@ -1133,19 +1516,19 @@ If the pantry already contains enough of an ingredient under the same unit, the 
 
 Example:
 
-````text
+```text
 Required:
 Eggs → 6 pcs
 
 Pantry:
 Eggs → 12 pcs
-````
+```
 
 Result:
 
-````text
+```text
 No eggs need to be purchased.
-````
+```
 
 ---
 
@@ -1157,13 +1540,13 @@ Automatic unit conversion is not currently performed.
 
 Example:
 
-````text
+```text
 Required:
 Rice → 500 g
 
 Pantry:
 Rice → 1 kg
-````
+```
 
 Because the units differ, the backend does not automatically subtract the quantities.
 
@@ -1171,19 +1554,20 @@ The required amount remains represented in the Grocery List rather than making a
 
 ---
 
-### 7. Price Lookup (new)
+### 7. Price Lookup
 
 For each item still needing to be bought, the service looks up `(ingredient, unit) → price_per_unit` from `ingredient_prices` via `get_ingredient_price_map()`.
 
-````text
+```text
 quantity_to_buy x price_per_unit  →  item's estimated_cost
 sum of all priced items' estimated_cost  →  total_estimated_cost
-````
+```
 
-- Matching is exact on `(ingredient_name, unit)` — the same unit-safety principle as everything else in this module. A price entered for `rice` in `kg` will not be applied to a grocery item that needs `rice` in `g`.
-- **If an ingredient has no price entry for its exact unit, `estimated_cost` is `null` for that item** — it is silently omitted from the total rather than guessed or converted.
+- Matching is exact on `(ingredient_name, unit)`: the same unit-safety principle as everything else in this module. A price entered for `rice` in `kg` will not be applied to a grocery item that needs `rice` in `g`.
+- **If an ingredient has no price entry for its exact unit, `estimated_cost` is `null` for that item**: it is silently omitted from the total rather than guessed or converted.
 - `total_estimated_cost` is only populated if **at least one** item in the list had a known price; if nothing could be priced, it's `null` rather than a misleading `₱0.00`.
-- **This means the total can understate the true cost of the list** whenever some ingredients are priced and others aren't — there is currently no indicator in the response distinguishing "nothing left to buy" from "some items left to buy have no known price." Worth flagging to the user in the UI (e.g. "partial total — some prices unavailable") if this matters for how the feature is presented.
+- **This means the total can understate the true cost of the list** whenever some ingredients are priced and others aren't. There is currently no indicator in the response distinguishing "nothing left to buy" from "some items left to buy have no known price." Worth flagging to the user in the UI (e.g. "partial total, some prices unavailable") if this matters for how the feature is presented.
+- Because `ingredient_prices` has not been seeded yet (see the Ingredients Module above), every item currently returns `estimated_cost: null` until prices are added.
 
 ---
 
@@ -1191,16 +1575,16 @@ sum of all priced items' estimated_cost  →  total_estimated_cost
 
 A Grocery List item contains:
 
-````text
+```text
 Ingredient
 Unit
 Required Quantity
 Pantry Quantity
 Quantity to Buy
 Estimated Cost (optional)
-````
+```
 
-````json
+```json
 {
   "ingredient": "Chicken",
   "unit": "g",
@@ -1209,11 +1593,11 @@ Estimated Cost (optional)
   "quantity_to_buy": 500,
   "estimated_cost": 90.00
 }
-````
+```
 
 An item with no known price for its unit:
 
-````json
+```json
 {
   "ingredient": "Bay Leaves",
   "unit": "pcs",
@@ -1222,18 +1606,18 @@ An item with no known price for its unit:
   "quantity_to_buy": 3,
   "estimated_cost": null
 }
-````
+```
 
 The overall response also contains the date range covered, and an optional running total:
 
-````json
+```json
 {
   "start_date": "2026-09-15",
   "end_date": "2026-09-21",
   "items": [ /* ... */ ],
   "total_estimated_cost": 342.50
 }
-````
+```
 
 `total_estimated_cost` is `null` if no item in the list had a known price.
 
@@ -1243,10 +1627,10 @@ The overall response also contains the date range covered, and an optional runni
 
 The Grocery List endpoint accepts:
 
-````text
+```text
 start_date
 end_date
-````
+```
 
 The date range determines which planned meals contribute ingredients to the grocery list.
 
@@ -1254,17 +1638,17 @@ If no date range is provided, the backend uses the current week.
 
 Example:
 
-````text
+```text
 GET /api/v1/grocery-list
-````
+```
 
 generates the grocery list for the current week.
 
 A specific date range can also be requested:
 
-````text
+```text
 GET /api/v1/grocery-list?start_date=2026-08-18&end_date=2026-08-24
-````
+```
 
 ---
 
@@ -1272,7 +1656,7 @@ GET /api/v1/grocery-list?start_date=2026-08-18&end_date=2026-08-24
 
 The complete Grocery List flow is:
 
-````text
+```text
 Supabase Auth
       ↓
 Authenticated User
@@ -1296,7 +1680,7 @@ Missing Ingredients
 Price Lookup (ingredient_prices)
       ↓
 Grocery List (with pricing where known)
-````
+```
 
 This makes the Grocery List the final derived feature of the Pantry + Meals + Meal Planner + Ingredient Prices workflow.
 
@@ -1308,13 +1692,13 @@ The Favorites module allows authenticated users to bookmark meals from the meal 
 
 Each favorite connects:
 
-````text
+```text
 Profile
    ↓
 Favorite
    ↓
 Meal
-````
+```
 
 A favorite contains:
 
@@ -1323,18 +1707,18 @@ A favorite contains:
 
 The database model is:
 
-````text
+```text
 favorites
-````
+```
 
 with relationships to:
 
-````text
+```text
 profiles
 meals
-````
+```
 
-Unlike Meal Planner, both the profile and meal relationships use cascading deletion — a favorite is a bookmark, not a scheduling record, so it has no reason to outlive either the user or the meal it points to.
+Unlike Meal Planner, both the profile and meal relationships use cascading deletion: a favorite is a bookmark, not a scheduling record, so it has no reason to outlive either the user or the meal it points to.
 
 A unique constraint on `(profile_id, meal_id)` prevents the same user from favoriting the same meal twice at the database level.
 
@@ -1360,27 +1744,27 @@ Both the add and remove operations are intentionally idempotent, so the Flutter 
 
 Add:
 
-````text
+```text
 POST /favorites (meal_id: X)
       ↓
 Already favorited?
       ├── Yes → return existing favorite
       └── No  → create new favorite
-````
+```
 
 Remove:
 
-````text
+```text
 DELETE /favorites/{meal_id}
       ↓
 Currently favorited?
       ├── Yes → delete favorite
       └── No  → no-op, return 204 anyway
-````
+```
 
 Favorites architecture:
 
-````text
+```text
 Authenticated User
        ↓
 Profile
@@ -1388,7 +1772,7 @@ Profile
 Favorites
        ↓
 PostgreSQL
-````
+```
 
 ---
 
@@ -1398,19 +1782,19 @@ The Nutrition module answers one question for a given user and meal: **is this m
 
 A meal is nutritionally adequate only when **both** checks pass:
 
-````text
-Caloric adequacy   — the meal's calories fall inside the user's per-meal bracket
+```text
+Caloric adequacy    : the meal's calories fall inside the user's per-meal bracket
         +
-Food-group adequacy — the meal's Grow/Glow balance falls inside the Pinggang Pinoy bands
+Food-group adequacy : the meal's Grow/Glow balance falls inside the Pinggang Pinoy bands
         ↓
 Nutritional adequacy
-````
+```
 
-Like the Grocery List, Nutrition is a **computed feature**: results are calculated on request and are not persisted. The one table it adds, `ingredient_food_groups`, is reference data, not user data — and, as of this update, it links to `ingredients` by foreign key rather than by name string (see the Ingredients Module above).
+Like the Grocery List, Nutrition is a **computed feature**: results are calculated on request and are not persisted. The one table it adds, `ingredient_food_groups`, is reference data, not user data, and, as of the ingredient normalization, it links to `ingredients` by foreign key rather than by name string (see the Ingredients Module above).
 
 Nutrition flow:
 
-````text
+```text
 Authenticated User
        ↓
 Profile (date of birth, sex, physical activity level)
@@ -1424,14 +1808,14 @@ Meal
        └── Ingredients (via Ingredient FK) → grams → Go/Grow/Glow proportions → Food-Group Adequacy
        ↓
 Nutritional Adequacy
-````
+```
 
 ## Standards Used
 
 Two external standards are combined. That combination is a methodological choice, not a single official table, and must be documented as such in the thesis methodology chapter with both sources cited separately:
 
-1. **PDRI 2015 (Revised September 2018), FNRI-DOST** — Recommended Energy Intake by sex and age bracket. PDRI gives one value per sex/age and does not stratify by physical activity.
-2. **FAO/WHO/UNU (2001), *Human Energy Requirements*, Table 5.3** — Physical Activity Level (PAL) categories, used as ratios to scale the PDRI value for activity level, anchored on `moderately_active` = the PDRI value as-is.
+1. **PDRI 2015 (Revised September 2018), FNRI-DOST**: Recommended Energy Intake by sex and age bracket. PDRI gives one value per sex/age and does not stratify by physical activity.
+2. **FAO/WHO/UNU (2001), *Human Energy Requirements*, Table 5.3**: Physical Activity Level (PAL) categories, used as ratios to scale the PDRI value for activity level, anchored on `moderately_active` = the PDRI value as-is.
 
 Food-group targets come from **FNRI-DOST Pinggang Pinoy (2016)**.
 
@@ -1439,13 +1823,13 @@ Food-group targets come from **FNRI-DOST Pinggang Pinoy (2016)**.
 
 `get_daily_caloric_requirement(date_of_birth, sex, physical_activity_level)` returns the profile's daily kcal need:
 
-````text
+```text
 daily_kcal = round(PDRI value for (sex, age bracket) x activity scale factor)
-````
+```
 
 PDRI baseline (kcal/day, at `moderately_active`):
 
-| Sex    | 19–29 | 30–49 | 50–59 | 60–69 | 70+  |
+| Sex    | 19-29 | 30-49 | 50-59 | 60-69 | 70+  |
 |--------|------:|------:|------:|------:|-----:|
 | Male   | 2530  | 2420  | 2420  | 2140  | 1960 |
 | Female | 1930  | 1870  | 1870  | 1610  | 1540 |
@@ -1462,25 +1846,25 @@ Handling of edge cases (each returns an explicit result status rather than raisi
 
 - **Activity level not set** → `activity_not_set`.
 - **Sex other than male/female** (e.g. "Prefer not to say") → `sex_not_supported`, because the PDRI table only has male/female columns.
-- **Age below 19** → clamped to the 19–29 bracket as a documented fallback (no adult PDRI bracket exists below 19). Flag for adviser review if pediatric handling matters later.
+- **Age below 19** → clamped to the 19-29 bracket as a documented fallback (no adult PDRI bracket exists below 19). Flag for adviser review if pediatric handling matters later.
 
 ## Per-Meal Caloric Adequacy
 
-````text
+```text
 full-meal target = daily_kcal / 3                  (MEALS_PER_DAY = 3)
 ulam target      = full-meal target x 0.67          (ULAM_ENERGY_SHARE)
 bracket          = ulam target x (1 ± 0.20)         (PER_MEAL_TOLERANCE = ±20%)
-````
+```
 
-`meal.calories` is then classified as `below`, `within`, or `above` the bracket, or `unavailable` (see Unavailable States). Example: a male aged 19–29, moderately active (2530 kcal/day) has a bracket of about **452–678 kcal** per dish.
+`meal.calories` is then classified as `below`, `within`, or `above` the bracket, or `unavailable` (see Unavailable States). Example: a male aged 19-29, moderately active (2530 kcal/day) has a bracket of about **452-678 kcal** per dish.
 
 ## Ulam-Only Scaling (methodology choice)
 
 Seeded meals are **ulam/viand dishes**; rice and other Go-group staples are modeled as their own separate meals (e.g. Garlic Fried Rice). Both the calorie target and the Pinggang Pinoy bands describe a *whole plate* (staple + ulam), so applying them directly to a single dish would compare an ulam against a plate-sized target. Three app-specific reconciliations address this:
 
-- **`ULAM_ENERGY_SHARE` = 1 − midpoint of the Go band (23–43% → 33%) = 0.67.** The ulam is expected to carry the non-Go share of a meal's energy; the caloric bracket is scaled by it.
+- **`ULAM_ENERGY_SHARE` = 1 − midpoint of the Go band (23-43% → 33%) = 0.67.** The ulam is expected to carry the non-Go share of a meal's energy; the caloric bracket is scaled by it.
 - **`ULAM_FOOD_GROUP_TARGETS`.** Go is excluded from the food-group check, and the Grow and Glow bands are divided by the same 0.67, judged as shares of the Grow+Glow total.
-- **`STAPLE_MEAL_NAMES`** (currently Garlic Fried Rice). Staples are not judged as an ulam: they report `is_staple: true`, `caloric_adequacy: "unavailable"`, and no adequacy verdict, instead of a false fail.
+- **`STAPLE_MEAL_NAMES`** (currently Garlic Fried Rice). Staples are not judged as an ulam: they report `is_staple: true`, `caloric_adequacy: "unavailable"`, and no adequacy verdict, instead of a false fail. The Weekly Plan module also uses `is_staple_meal()` to keep staples out of planned meals.
 
 These are **not official PDRI or Pinggang Pinoy figures** and must be presented as the app's own reconciliation in the methodology chapter.
 
@@ -1489,17 +1873,17 @@ These are **not official PDRI or Pinggang Pinoy figures** and must be presented 
 Each meal's ingredients are classified into Pinggang Pinoy groups and weighed:
 
 1. **Classification.** Each `meal_ingredients` row is resolved to its `Ingredient`, then joined against `ingredient_food_groups` by `ingredient_id` to get `go`, `grow`, `glow`, or `other`. `other` (condiments, seasonings, fats, liquids, sauces) never enters the calculation.
-   - The name→group lookup used to key off a lowercased ingredient-name string (`ingredient_food_groups.ingredient_name`); it now goes through the `Ingredient` foreign key. `get_ingredient_food_group_map()` still exposes a `name → group` dict to the rest of `nutrition/service.py` (an ORM join against `Ingredient.name` builds it), so `compute_food_group_proportions()` itself is unchanged.
-   - **This map is now cached at the module/process level** (`_food_group_map_cache`), not re-queried on every call as before. It's built once on first use and reused for the life of the running process; a `refresh=True` parameter exists to force a rebuild if needed (e.g. after seeding new ingredients without restarting the server). Worth knowing if you add a new `ingredient_food_groups` row and don't see it reflected without a restart or explicit refresh.
+   - The name-to-group lookup used to key off a lowercased ingredient-name string (`ingredient_food_groups.ingredient_name`); it now goes through the `Ingredient` foreign key. `get_ingredient_food_group_map()` still exposes a `name → group` dict to the rest of `nutrition/service.py` (an ORM join against `Ingredient.name` builds it), so `compute_food_group_proportions()` itself is unchanged.
+   - **This map is cached at the module/process level** (`_food_group_map_cache`), not re-queried on every call. It's built once on first use and reused for the life of the running process; a `refresh=True` parameter exists to force a rebuild if needed (e.g. after seeding new ingredients without restarting the server). Worth knowing if you add a new `ingredient_food_groups` row and don't see it reflected without a restart or explicit refresh.
 2. **Mass.** Ingredients stored in `g`/`kg` are used directly. Piece- or cup-based ingredients are converted with `INGREDIENT_GRAM_CONVERSIONS` in `features/nutrition/constants.py` (reference weights from USDA and standard culinary conversions, e.g. medium tomato 123 g, medium potato 213 g, 5" sweet potato 130 g, 7" daikon/labanos 338 g, quail egg 9 g).
 3. **Proportions.** Grams are summed per group and reported as percentages of the classified total: `{"go": %, "grow": %, "glow": %}`. An ingredient with no classification, or with no gram conversion for its unit, is **excluded from that meal's proportions** rather than guessed.
 4. **Verdict (ulam-only).** Go is ignored; Grow and Glow are renormalized to shares of the Grow+Glow total and checked against the ulam bands:
 
    | Group | Plate-level band (Pinggang Pinoy) | Ulam-only band (÷ 0.67) |
    |-------|-----------------------------------|--------------------------|
-   | Go    | 23–43%                            | not scored               |
-   | Grow  | 7–27%                             | ≈ 10.4–40.3%             |
-   | Glow  | 40–60%                            | ≈ 59.7–89.6%             |
+   | Go    | 23-43%                            | not scored               |
+   | Grow  | 7-27%                             | ≈ 10.4-40.3%             |
+   | Glow  | 40-60%                            | ≈ 59.7-89.6%             |
 
    Because the two shares sum to 100%, the Grow and Glow bands mirror each other. Boundaries are inclusive.
 
@@ -1507,7 +1891,7 @@ Each meal's ingredients are classified into Pinggang Pinoy groups and weighed:
 
 ## Unavailable States
 
-Adequacy is `None`/`unavailable` — never a silent `false` — when the computation can't be made:
+Adequacy is `None`/`unavailable`, never a silent `false`, when the computation can't be made:
 
 - Physical activity level not set, or a sex value with no PDRI row (caloric side).
 - The meal has no `calories` value.
@@ -1518,15 +1902,15 @@ Adequacy is `None`/`unavailable` — never a silent `false` — when the computa
 
 ## Endpoint and Response
 
-````text
+```text
 GET /api/v1/meals/{meal_id}/nutrition-adequacy
-````
+```
 
 Requires authentication; the result is computed for the authenticated user's own profile. Returns `404` if the meal or the profile does not exist.
 
 Example response:
 
-````json
+```json
 {
   "caloric_adequacy": "within",
   "food_group_proportions": { "go": 0.0, "grow": 34.6, "glow": 65.4 },
@@ -1534,7 +1918,7 @@ Example response:
   "nutritionally_adequate": true,
   "is_staple": false
 }
-````
+```
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -1546,11 +1930,11 @@ Example response:
 
 ## Ingredient Food Groups (reference table)
 
-See the Ingredients Module section above for the current, FK-based schema of `ingredient_food_groups`. It is created and seeded by migration `b1c2d3e4f5a6`, extended by `c2d3e4f5a6b7`, and converted from name-based to FK-based by `h6c7d8e9f0a1`. All ingredients used by the 20 seeded meals are classified. **When adding a meal or ingredient, add a matching row (new migration) — an unclassified ingredient is silently dropped from that meal's proportions.** `scripts/debug_food_group_exclusions.py` lists every dropped ingredient.
+See the Ingredients Module section above for the current, FK-based schema of `ingredient_food_groups`. It is created and seeded by migration `b1c2d3e4f5a6`, extended by `c2d3e4f5a6b7`, and converted from name-based to FK-based by `h6c7d8e9f0a1`. All ingredients used by the 20 seeded meals are classified. **When adding a meal or ingredient, add a matching row (new migration): an unclassified ingredient is silently dropped from that meal's proportions.** `scripts/debug_food_group_exclusions.py` lists every dropped ingredient.
 
 Nutrition architecture:
 
-````text
+```text
 Authenticated User
        ↓
 Profile ── Meal
@@ -1560,7 +1944,7 @@ Nutrition Service
 constants.py + ingredient_food_groups (via Ingredient FK)
        ↓
 Computed Adequacy (nothing persisted)
-````
+```
 
 ---
 
@@ -1568,9 +1952,9 @@ Computed Adequacy (nothing persisted)
 
 All API routes are versioned under:
 
-````text
+```text
 /api/v1
-````
+```
 
 ---
 
@@ -1640,6 +2024,28 @@ Meal Planner routes are protected using the authenticated Supabase user.
 
 ---
 
+## Weekly Plan
+
+| Method | Endpoint                       | Description                                                  |
+| ------ | -------------------------------- | -------------------------------------------------------------- |
+| POST   | `/api/v1/weekly-plan/generate` | Generate a draft plan (1 to 7 days) with alternatives and cost, budget, and savings totals. Nothing is stored |
+| POST   | `/api/v1/weekly-plan/accept`   | Save a reviewed draft as Meal Planner entries (skips occupied slots unless `replace_existing` is `true`) |
+
+Weekly Plan routes are protected using the authenticated Supabase user.
+
+---
+
+## Savings
+
+| Method | Endpoint                                   | Description                                                  |
+| ------ | -------------------------------------------- | -------------------------------------------------------------- |
+| GET    | `/api/v1/savings/summary`                  | Savings summary for the current week (default)               |
+| GET    | `/api/v1/savings/summary?period=month`     | Savings summary for the current month                        |
+
+The summary includes the verdict, totals, a daily breakdown, and an optional projection. The Savings endpoint is protected using the authenticated Supabase user.
+
+---
+
 ## Grocery List
 
 | Method | Endpoint                                     | Description                                     |
@@ -1651,7 +2057,7 @@ The Grocery List endpoint is protected using the authenticated Supabase user.
 
 The list is calculated dynamically from:
 
-````text
+```text
 Meal Plan
 +
 Meal Ingredients
@@ -1659,7 +2065,7 @@ Meal Ingredients
 Pantry
 +
 Ingredient Prices
-````
+```
 
 No grocery-list records are persisted in the database in the current implementation.
 
@@ -1675,7 +2081,7 @@ No grocery-list records are persisted in the database in the current implementat
 
 Favorites routes are protected using the authenticated Supabase user.
 
-Note the delete endpoint is keyed by `meal_id`, not the favorite's own `id` — the client always knows which meal it's toggling, not the underlying favorite record's identifier.
+Note the delete endpoint is keyed by `meal_id`, not the favorite's own `id`: the client always knows which meal it's toggling, not the underlying favorite record's identifier.
 
 ---
 
@@ -1683,13 +2089,13 @@ Note the delete endpoint is keyed by `meal_id`, not the favorite's own `id` — 
 
 Protected endpoints use:
 
-````text
+```text
 Authorization: Bearer <Supabase Access Token>
-````
+```
 
 The authentication flow is:
 
-````text
+```text
 JWT
  ↓
 get_current_user()
@@ -1699,36 +2105,38 @@ Supabase auth_id
 Profile
  ↓
 User-owned resources
-````
+```
 
 User-specific resources are always scoped to the authenticated user's profile.
 
 For example:
 
-````text
+```text
 Authenticated User
        ↓
 Profile
        ├── Pantry Items
        ├── Meal Plan Entries
        └── Favorites
-````
+```
 
 The Grocery List also follows this ownership model.
 
 The authenticated user can only generate a Grocery List using:
 
-````text
+```text
 Their Meal Plan
 +
 Their Pantry
-````
+```
 
 A user cannot use another user's profile identifier to retrieve another user's grocery requirements, meal plan, or favorites.
 
+Weekly Plan and Savings follow the same model: the profile is always resolved from the authenticated user (`get_profile_by_auth_id`), so a draft is built from, and accepted into, only that user's own Meal Planner, and a savings summary only ever reads that user's own planned meals and budget.
+
 The Nutrition endpoint always uses the authenticated user's own profile (date of birth, sex, activity level); there is no way to request adequacy for another user's profile.
 
-`ingredients`, `ingredient_food_groups`, and `ingredient_prices` are all shared reference data, not user-owned — every user reads the same ingredient vocabulary, classifications, and prices.
+`ingredients`, `ingredient_food_groups`, `ingredient_prices`, `allergen_categories`, and `unit_conversions` are all shared reference data, not user-owned: every user reads the same ingredient vocabulary, classifications, prices, and conversion factors.
 
 ---
 
@@ -1740,27 +2148,27 @@ Instead, it reads the latest pantry state when the endpoint is requested.
 
 Therefore:
 
-````text
+```text
 Add Pantry Item
       ↓
 Grocery List recalculates
-````
+```
 
 and:
 
-````text
+```text
 Delete Pantry Item
       ↓
 Grocery List recalculates
-````
+```
 
 Similarly:
 
-````text
+```text
 Change Meal Plan
       ↓
 Grocery List recalculates
-````
+```
 
 This allows the Grocery List to remain a live derived view. The same is true of pricing: if `ingredient_prices` changes, the next grocery-list request reflects it immediately, since nothing about pricing is cached or stored.
 
@@ -1772,9 +2180,9 @@ Profile images are stored using **Supabase Storage**.
 
 Bucket:
 
-````text
+```text
 profile-images
-````
+```
 
 Supported formats:
 
@@ -1784,13 +2192,13 @@ Supported formats:
 
 Maximum file size:
 
-````text
+```text
 5 MB
-````
+```
 
 Upload flow:
 
-````text
+```text
 Client
    ↓
 POST /profiles/me/image
@@ -1802,7 +2210,7 @@ Supabase Storage
 Public Image URL
    ↓
 Profile.profile_image_url
-````
+```
 
 The Supabase service-role key is used only on the backend.
 
@@ -1818,56 +2226,60 @@ Database provider:
 
 Current application tables include:
 
-````text
+```text
 profiles
    │
    ├── food_allergies
-   ├── disliked_ingredients
+   ├── disliked_ingredients (ingredient_id → ingredients)
    └── pantry_items (ingredient_id → ingredients)
 
 ingredients
    │
    ├── ingredient_food_groups (ingredient_id, unique)
-   └── ingredient_prices (ingredient_id + unit, unique together)
+   ├── ingredient_prices (ingredient_id + unit, unique together)
+   ├── allergen_categories (category + ingredient_id, unique together)
+   └── ingredient_substitutions (ingredient_id → ingredients)
+
+unit_conversions (from_unit + to_unit, unique together)
 
 meals
    │
    ├── meal_ingredients (ingredient_id → ingredients)
    └── meal_instructions
 
-ingredient_substitutions   (still name-based, not part of this refactor)
-
 meal_plan_entries
 
 favorites
-````
+```
 
-There is currently **no `grocery_list_items` table**, and nutrition results are not stored — both are computed dynamically from existing data. `ingredient_food_groups` and `ingredient_prices` are both reference tables keyed off `ingredients.id`, with no other foreign keys pointing at them.
+There is currently **no `grocery_list_items` table**, no weekly-plan table, no savings table, and nutrition results are not stored: all four are computed dynamically from existing data. `ingredient_food_groups`, `ingredient_prices`, and `allergen_categories` are reference tables keyed off `ingredients.id`, with no other foreign keys pointing at them.
 
 Main relationships:
 
-````text
+```text
 Profile
  ├── Pantry Items ──→ Ingredient
  ├── Food Allergies
- ├── Disliked Ingredients
+ ├── Disliked Ingredients ──→ Ingredient
  ├── Meal Plan Entries
  └── Favorites
 
 Ingredient
  ├── Food Group Entry (0 or 1)
- └── Prices (0 or more, one per unit)
+ ├── Prices (0 or more, one per unit)
+ ├── Allergen Categories (0 or more)
+ └── Substitutions
 
 Meal
  ├── Meal Ingredients ──→ Ingredient
  ├── Meal Instructions
  ├── Meal Plan Entries
  └── Favorites
-````
+```
 
 Derived Grocery List:
 
-````text
+```text
 Meal Plan Entries
         +
 Meal Ingredients
@@ -1877,11 +2289,37 @@ Pantry Items
 Ingredient Prices
         ↓
 Computed Grocery List
-````
+```
+
+Derived Weekly Plan draft:
+
+```text
+Profile (budget, allergies)
+        +
+Pantry
+        +
+Meals
+        ↓
+Recommendation candidates → Greedy selection
+        ↓
+Draft (accepted into Meal Plan Entries)
+```
+
+Derived Savings Summary:
+
+```text
+Meal Plan Entries (week or month)
+        +
+Meal estimated costs
+        +
+Profile budget per meal
+        ↓
+Computed Savings Summary
+```
 
 Derived Nutritional Adequacy:
 
-````text
+```text
 Profile
    +
 Meal (calories, ingredients → Ingredient)
@@ -1889,9 +2327,9 @@ Meal (calories, ingredients → Ingredient)
 ingredient_food_groups
         ↓
 Computed Nutritional Adequacy
-````
+```
 
-Foreign keys and cascading behavior are defined at the database level where appropriate. `ingredient_food_groups.ingredient_id` cascades on delete from `ingredients` — deleting an ingredient removes its food-group classification automatically.
+Foreign keys and cascading behavior are defined at the database level where appropriate. `ingredient_food_groups.ingredient_id` cascades on delete from `ingredients`: deleting an ingredient removes its food-group classification automatically.
 
 Meal Plan Entries restrict meal deletion (a meal cannot be deleted while still scheduled), while Favorites cascade on meal deletion (a bookmark to a deleted meal is meaningless and is removed automatically).
 
@@ -1899,7 +2337,7 @@ Meal Plan Entries restrict meal deletion (a meal cannot be deleted while still s
 
 # 🔄 Recommendation Data Flow
 
-````text
+```text
 Supabase Auth
       ↓
 Authenticated User
@@ -1949,16 +2387,16 @@ Disliked Ingredient Score
       ↓
 Hybrid Score
       ↓
-Ranking / Sort (score or cost — Week 7)
+Ranking / Sort (score or cost, Week 7)
       ↓
 Recommended Meals (+ nutrition result, Week 8)
-````
+```
 
 ---
 
 # 📅 Meal Planning Data Flow
 
-````text
+```text
 Supabase Auth
       ↓
 Authenticated User
@@ -1974,9 +2412,43 @@ Meal Plan Entry
       └── Meal
              ↓
           PostgreSQL
-````
+```
 
 Meal-plan entries are scoped to the authenticated user's profile.
+
+Entries reach the Meal Planner in two ways: one at a time through the Meal Planner endpoints, or in bulk when a Weekly Plan draft is accepted:
+
+```text
+Recommendations candidates
+      ↓
+Weekly Plan draft (generate)
+      ↓
+Review / swap
+      ↓
+Accept
+      ↓
+Meal Plan Entries
+```
+
+---
+
+# 💰 Savings Data Flow
+
+```text
+Supabase Auth
+      ↓
+Authenticated User
+      ↓
+Profile (budget per meal)
+      ↓
+Meal Plan Entries (current week or month)
+      ↓
+Meal estimated costs
+      ↓
+Budget total vs. cost total
+      ↓
+Verdict + daily breakdown + projection
+```
 
 ---
 
@@ -1984,7 +2456,7 @@ Meal-plan entries are scoped to the authenticated user's profile.
 
 The Grocery List completes the meal-planning workflow.
 
-````text
+```text
 Meal Planner
       ↓
 Planned Meals
@@ -2002,21 +2474,21 @@ Missing Ingredients
 Price Lookup
       ↓
 Grocery List (with pricing where known)
-````
+```
 
 The overall TipidMeal planning workflow is therefore:
 
-````text
+```text
 Recommendations
       ↓
-Meal Selection
+Meal Selection  (or a generated Weekly Plan)
       ↓
 Meal Planner
       ↓
-Grocery List
+Savings check  /  Grocery List
       ↓
 Pantry
-````
+```
 
 The Grocery List acts as the bridge between planned meals and shopping requirements.
 
@@ -2024,7 +2496,7 @@ The Grocery List acts as the bridge between planned meals and shopping requireme
 
 # ⭐ Favorites Data Flow
 
-````text
+```text
 Supabase Auth
       ↓
 Authenticated User
@@ -2038,15 +2510,15 @@ Favorite Entry
       └── Meal
              ↓
           PostgreSQL
-````
+```
 
-Favorites are scoped to the authenticated user's profile, and provide a lightweight, independent bookmarking path alongside the main Discover → Plan → Shop workflow — a user can favorite a meal without it being scheduled anywhere in their Meal Planner.
+Favorites are scoped to the authenticated user's profile, and provide a lightweight, independent bookmarking path alongside the main Discover → Plan → Shop workflow: a user can favorite a meal without it being scheduled anywhere in their Meal Planner.
 
 ---
 
 # 🥗 Nutrition Data Flow (Week 8)
 
-````text
+```text
 Supabase Auth
       ↓
 Authenticated User
@@ -2065,7 +2537,7 @@ Caloric adequacy           Food-group adequacy (ulam-only)
   └──────────┬───────────────────┘
              ↓
    Nutritional adequacy (both must pass)
-````
+```
 
 ---
 
@@ -2075,129 +2547,169 @@ Backend modules can be independently imported and validated before integration t
 
 Example Meal Planner validation:
 
-````bash
+```bash
 python -c "from features.meal_planner.models import MealPlanEntry; print(MealPlanEntry.__tablename__)"
-````
+```
 
-````bash
+```bash
 python -c "from features.meal_planner.schemas import MealPlanEntryCreate, MealPlanEntryUpdate, MealPlanEntryResponse, WeeklyPlanResponse; print('Meal planner schemas OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.meal_planner.repository import create_meal_plan_entry, get_meal_plan_entries, get_meal_plan_entry_by_id, update_meal_plan_entry, delete_meal_plan_entry; print('Meal planner repository OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.meal_planner.service import create_meal_plan_entry, get_meal_plan_entries, get_meal_plan_entry_by_id, update_meal_plan_entry, delete_meal_plan_entry; print('Meal planner service OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.meal_planner.router import router; print('Meal planner router OK')"
-````
+```
 
-````bash
+```bash
 python -c "from core.utils import is_planned_slot_in_past, get_app_now; print('Core utils OK')"
-````
+```
 
-Ingredients validation (new):
+Ingredients validation:
 
-````bash
+```bash
 python -c "from features.ingredients.models.ingredient import Ingredient; print(Ingredient.__tablename__)"
-````
+```
 
-````bash
+```bash
 python -c "from features.ingredients.models.ingredient_price import IngredientPrice; print(IngredientPrice.__tablename__)"
-````
+```
+
+```bash
+python -c "from features.ingredients.models.allergen_category import AllergenCategory; print(AllergenCategory.__tablename__)"
+```
+
+```bash
+python -c "from features.ingredients.models.unit_conversion import UnitConversion; print(UnitConversion.__tablename__)"
+```
+
+Weekly Plan validation:
+
+```bash
+python -c "from features.weekly_plan.planner import build_weekly_plan, build_alternatives; print('Weekly plan planner OK')"
+```
+
+```bash
+python -c "from features.weekly_plan.schemas import WeeklyPlanGenerateRequest, WeeklyPlanDraftResponse, WeeklyPlanAcceptRequest, WeeklyPlanAcceptResponse; print('Weekly plan schemas OK')"
+```
+
+```bash
+python -c "from features.weekly_plan.service import generate_weekly_plan, accept_weekly_plan; print('Weekly plan service OK')"
+```
+
+```bash
+python -c "from features.weekly_plan.router import router; print('Weekly plan router OK')"
+```
+
+Savings validation:
+
+```bash
+python -c "from features.savings.schemas import SavingsPeriod, SavingsVerdict, SavingsSummary; print('Savings schemas OK')"
+```
+
+```bash
+python -c "from features.savings.service import get_savings_summary; print('Savings service OK')"
+```
+
+```bash
+python -c "from features.savings.router import router; print('Savings router OK')"
+```
 
 Grocery List validation:
 
-````bash
+```bash
 python -c "from features.grocery_list.schemas import GroceryListItem, GroceryListResponse; print('Grocery list schemas OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.grocery_list.service import get_grocery_list, get_ingredient_price_map; print('Grocery list service OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.grocery_list.router import router; print('Grocery list router OK')"
-````
+```
 
 Favorites validation:
 
-````bash
+```bash
 python -c "from features.favorites.models import Favorite; print(Favorite.__tablename__)"
-````
+```
 
-````bash
+```bash
 python -c "from features.favorites.schemas import FavoriteCreate, FavoriteResponse; print('Favorites schemas OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.favorites.repository import create_favorite, get_favorite_by_profile_and_meal, get_favorites_by_profile, delete_favorite; print('Favorites repository OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.favorites.service import create_favorite, get_favorites_by_profile, delete_favorite; print('Favorites service OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.favorites.router import router; print('Favorites router OK')"
-````
+```
 
 Recommendations validation:
 
-````bash
+```bash
 python -c "from features.recommendations.service import calculate_meal_coverage; print('Recommendations service OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.recommendations.scoring import calculate_budget_score, calculate_skill_score, calculate_allergy_score, calculate_disliked_ingredient_score, calculate_hybrid_score; print('Recommendations scoring OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.recommendations.router import router; print('Recommendations router OK')"
-````
+```
 
 Nutrition validation:
 
-````bash
+```bash
 python -c "from features.nutrition.constants import get_daily_caloric_requirement, get_per_meal_bracket, ULAM_FOOD_GROUP_TARGETS, STAPLE_MEAL_NAMES; print('Nutrition constants OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.nutrition.models.ingredient_food_group import IngredientFoodGroup; print(IngredientFoodGroup.__tablename__)"
-````
+```
 
-````bash
+```bash
 python -c "from features.nutrition.schemas import NutritionAdequacyResponse; print('Nutrition schemas OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.nutrition.service import compute_nutritional_adequacy, get_ingredient_food_group_map; print('Nutrition service OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.nutrition.router import router; print('Nutrition router OK')"
-````
+```
 
 Profiles validation:
 
-````bash
+```bash
 python -c "from features.profiles.models.profile import Profile, CookingSkillLevel, PhysicalActivityLevel; print('Profile model OK')"
-````
+```
 
-````bash
+```bash
 python -c "from features.profiles.schemas import ProfileCreate, ProfileUpdate, ProfileResponse; print('Profile schemas OK')"
-````
+```
 
 The complete FastAPI application can be verified with:
 
-````bash
+```bash
 python -c "from app.main import app; print('FastAPI app OK')"
-````
+```
 
-> **Note:** No automated unit tests currently exist for `scoring.py`, the recommendation pipeline, or the Nutrition module (Weeks 7–8). Skill scoring, cost sort, the affordability filter, and nutritional adequacy have been verified manually through Swagger, hand calculations, and the running app, against the 20 seeded meals, rather than with `pytest`.
+> **Note:** No automated unit tests currently exist for `scoring.py`, the recommendation pipeline, the Weekly Plan planner, the Savings calculation, or the Nutrition module. These have been verified manually through Swagger, hand calculations, and the running app, against the 20 seeded meals, rather than with `pytest`. The only file in `tests/` is a database connection check (`test_connection.py`).
 
 ---
 
@@ -2207,13 +2719,13 @@ The Grocery List should be tested against the following scenarios.
 
 ### Empty Meal Plan
 
-````text
+```text
 Meal Plan
     ↓
 No planned meals
     ↓
 Empty Grocery List
-````
+```
 
 The endpoint should return an empty list rather than producing an error.
 
@@ -2221,7 +2733,7 @@ The endpoint should return an empty list rather than producing an error.
 
 ### Fully Stocked Pantry
 
-````text
+```text
 Required:
 Rice → 1 kg
 
@@ -2230,13 +2742,13 @@ Rice → 1 kg
 
 Result:
 Nothing to buy
-````
+```
 
 ---
 
 ### Partially Stocked Pantry
 
-````text
+```text
 Required:
 Rice → 2 kg
 
@@ -2245,13 +2757,13 @@ Rice → 1 kg
 
 Result:
 Rice → 1 kg to buy
-````
+```
 
 ---
 
 ### Duplicate Ingredients
 
-````text
+```text
 Meal A:
 Chicken → 500 g
 
@@ -2260,7 +2772,7 @@ Chicken → 500 g
 
 Required:
 Chicken → 1000 g
-````
+```
 
 The duplicate ingredient should be aggregated before pantry subtraction.
 
@@ -2268,49 +2780,49 @@ The duplicate ingredient should be aggregated before pantry subtraction.
 
 ### Different Units
 
-````text
+```text
 Required:
 Rice → 500 g
 
 Pantry:
 Rice → 1 kg
-````
+```
 
 The backend should not perform automatic unit conversion.
 
 ---
 
-### Priced Item (new)
+### Priced Item
 
-````text
+```text
 Rice → 1 kg to buy
 Price entry: rice / kg / ₱55.00
       ↓
 estimated_cost: 55.00
-````
+```
 
-### Unpriced Item (new)
+### Unpriced Item
 
-````text
+```text
 Bay Leaves → 3 pcs to buy
 No price entry for (bay leaves, pcs)
       ↓
 estimated_cost: null, excluded from total_estimated_cost
-````
+```
 
-### Mixed List Total (new)
+### Mixed List Total
 
-````text
+```text
 Item A priced at ₱55.00, Item B unpriced
       ↓
-total_estimated_cost: 55.00 (Item B silently excluded — see caveat above)
-````
+total_estimated_cost: 55.00 (Item B silently excluded, see caveat above)
+```
 
 ---
 
 ### User Isolation
 
-````text
+```text
 User A
   ↓
 Meal Plan A
@@ -2318,7 +2830,7 @@ Meal Plan A
 Pantry A
   ↓
 Grocery List A
-````
+```
 
 User A must never receive ingredients derived from User B's meal plan or pantry.
 
@@ -2330,55 +2842,55 @@ The Favorites module should be tested against the following scenarios.
 
 ### Add New Favorite
 
-````text
+```text
 POST /favorites (meal_id: X)
       ↓
 201 Created
       ↓
 Favorite returned with nested meal summary
-````
+```
 
 ---
 
 ### Add Duplicate Favorite
 
-````text
+```text
 POST /favorites (meal_id: X)
       ↓
 Already favorited
       ↓
 201 Created (same favorite returned, not a 409 conflict)
-````
+```
 
 ---
 
 ### Remove Existing Favorite
 
-````text
+```text
 DELETE /favorites/{meal_id}
       ↓
 204 No Content
       ↓
 Favorite no longer appears in GET /favorites
-````
+```
 
 ---
 
 ### Remove Non-Existent Favorite
 
-````text
+```text
 DELETE /favorites/{meal_id}
       ↓
 Not currently favorited
       ↓
 204 No Content (no-op, not a 404)
-````
+```
 
 ---
 
 ### User Isolation
 
-````text
+```text
 User A
   ↓
 Favorites A
@@ -2386,7 +2898,7 @@ Favorites A
 User B
   ↓
 Favorites B
-````
+```
 
 User A must never see or be able to delete User B's favorites.
 
@@ -2396,45 +2908,193 @@ User A must never see or be able to delete User B's favorites.
 
 ### Yesterday
 
-````text
+```text
 POST /meal-planner (planned_date: yesterday)
       ↓
 400 Bad Request
       ↓
 "Cannot add a meal to a slot that has already passed"
-````
+```
 
 ### Today, Slot Cutoff Already Passed
 
-````text
+```text
 POST /meal-planner (planned_date: today, meal_slot: breakfast, now > 10:00 AM)
       ↓
 400 Bad Request
-````
+```
 
 ### Today, Slot Still Open / Any Future Date
 
-````text
+```text
 POST /meal-planner (planned_date: today, meal_slot: dinner, now < 9:00 PM)
       ↓
 201 Created
-````
+```
 
 ### Editing an Already-Past Entry Without Moving It
 
-````text
+```text
 PUT /meal-planner/{id} (meal_id changed only, planned_date/meal_slot unchanged, already in the past)
       ↓
-200 OK — not blocked
-````
+200 OK, not blocked
+```
 
 ### Editing an Entry Into the Past
 
-````text
+```text
 PUT /meal-planner/{id} (planned_date moved to yesterday)
       ↓
 400 Bad Request
-````
+```
+
+---
+
+# 🧪 Weekly Plan Validation
+
+### Generate a Full Week
+
+```text
+POST /weekly-plan/generate (days: 7)
+      ↓
+Up to 21 slots (3 per day), skipping slots that already passed today
+      ↓
+Every meal fits budget_per_meal and avoids the user's allergies
+```
+
+### Variety
+
+```text
+No meal appears more than twice in the plan (while the pool allows it)
+No meal repeats within 2 days (while the pool allows it)
+A small pool relaxes the rules step by step instead of leaving slots empty
+```
+
+### Reproducible Draft
+
+```text
+POST /weekly-plan/generate (seed: 42) twice
+      ↓
+Identical drafts
+```
+
+### Staples Excluded
+
+```text
+Garlic Fried Rice (staple) never appears as a planned meal
+```
+
+### Empty Candidate Pool
+
+```text
+No meal fits the budget and food restrictions
+      ↓
+404 "No meals match your budget and food restrictions."
+```
+
+### Range Fully in the Past
+
+```text
+start_date and days cover only slots that already passed
+      ↓
+400 "No upcoming meal slots left in this date range."
+```
+
+### Accept Without Replacing
+
+```text
+POST /weekly-plan/accept (replace_existing: false)
+      ↓
+Slots the user already filled are skipped, never overwritten
+      ↓
+{ "saved_count": N, "skipped_count": M }
+```
+
+### Accept With Replacing
+
+```text
+POST /weekly-plan/accept (replace_existing: true)
+      ↓
+Existing entries in each accepted slot are deleted and replaced
+```
+
+### Invalid Accept Requests
+
+```text
+Two entries in the same date and slot → 400
+An entry in a slot that has already passed → 400
+An unknown meal_id → 404
+      ↓
+Nothing is written (everything is validated first)
+```
+
+---
+
+# 🧪 Savings Validation
+
+### Week and Month Ranges
+
+```text
+period=week   → Monday to Sunday of the current week
+period=month  → first to last day of the current month
+```
+
+### Saving
+
+```text
+budget_per_meal 100, 9 planned meals costing 760 in total
+      ↓
+budget_total 900, total_savings 140, savings_percent 15.6
+      ↓
+verdict: saving
+```
+
+### On Budget
+
+```text
+|total_savings| within 5% of budget_total
+      ↓
+verdict: on_budget
+```
+
+### Over Budget
+
+```text
+cost_total above budget_total by more than 5%
+      ↓
+verdict: over_budget, total_savings negative
+```
+
+### Daily Breakdown
+
+```text
+One entry for every day in the period
+Days with no meals: planned_meals 0, all amounts 0.00
+```
+
+### Projection
+
+```text
+Fewer than 3 planned meals → projection: null
+3 or more planned meals    → average saving per meal x (3 x days in the period)
+```
+
+### No Planned Meals
+
+```text
+No entries in the period
+      ↓
+planned_meals 0, budget_total 0.00, savings_percent 0.0
+verdict: on_budget, projection: null
+```
+
+### Missing Profile
+
+```text
+GET /savings/summary without a profile
+      ↓
+404 "Profile not found"
+```
 
 ---
 
@@ -2442,40 +3102,40 @@ PUT /meal-planner/{id} (planned_date moved to yesterday)
 
 ### Affordability Hard Filter
 
-````text
+```text
 Meal cost > profile.budget_per_meal
       ↓
-Excluded from response entirely — never scored or returned
-````
+Excluded from response entirely: never scored or returned
+```
 
 ### Cost Sort
 
-````text
+```text
 GET /recommendations?sort_by=cost
       ↓
 Meals ordered by estimated_cost ascending
       ↓
 hybrid_score used only as a tiebreaker
-````
+```
 
 ### Score Sort (default)
 
-````text
+```text
 GET /recommendations (or ?sort_by=score)
       ↓
 adapt-tier meals first, then fallback-tier
       ↓
 hybrid_score descending within each tier
-````
+```
 
 ### Skill Scoring
 
-````text
+```text
 Beginner + Hard meal    → 0.20
 Beginner + Medium meal  → 0.60
 Beginner + Easy meal    → 1.00
 Advanced + any meal     → 1.00 (never penalized)
-````
+```
 
 Verified manually against all 20 seeded meals via Swagger; no automated test coverage yet.
 
@@ -2487,53 +3147,53 @@ The Nutrition module should be tested against the following scenarios.
 
 ### Daily Caloric Requirement
 
-````text
+```text
 Male, 19-29, moderately_active   → 2530 kcal/day
 Female, 30-49, sedentary         → round(1870 x 1.55/1.85) = 1567 kcal/day
 Male, 19-29, active              → round(2530 x 2.20/1.85) = 3009 kcal/day
-````
+```
 
 ### Per-Meal Bracket
 
-````text
+```text
 Male, 19-29, moderately_active (2530 kcal/day)
       ↓
 2530 / 3 = 843.3  →  x 0.67 = 565.0
       ↓
 Bracket: 452.0 - 678.0 kcal
-````
+```
 
 ### Caloric Adequacy
 
-````text
+```text
 meal.calories < 452   → "below"
 452 <= calories <= 678 → "within"
 meal.calories > 678   → "above"
-````
+```
 
 ### Food-Group Adequacy (ulam-only)
 
-````text
+```text
 Sinigang na Baboy   500 g grow, 944 g glow  → grow share 34.6%  → adequate
 Beef Tapa           500 g grow, 0 g glow    → grow share 100%   → not adequate
-````
+```
 
 ### Unavailable / Edge Cases
 
-````text
+```text
 physical_activity_level not set  → caloric_adequacy "unavailable", nutritionally_adequate null
 sex not male/female              → caloric_adequacy "unavailable"
 age under 19                     → clamped to the 19-29 bracket
 Garlic Fried Rice (staple)       → is_staple true, caloric "unavailable", nutritionally_adequate null
 meal with no classifiable ingredients → food_group_proportions null, nutritionally_adequate null
-````
+```
 
 ### Missing Meal or Profile
 
-````text
+```text
 GET /meals/{unknown_id}/nutrition-adequacy → 404 "Meal not found"
 Authenticated user without a profile       → 404 "Profile not found"
-````
+```
 
 ---
 
@@ -2543,38 +3203,36 @@ Authenticated user without a profile       → 404 "Profile not found"
 
 Test matrix:
 
-````text
+```text
 5 PDRI age brackets (19-29, 30-49, 50-59, 60-69, 70+)
 x 2 sexes (male, female)
 x 3 activity levels (sedentary, moderately_active, active)
 = 30 profiles
 
 30 profiles x every seeded meal = one test case per (profile, meal)
-````
+```
 
 Rules:
 
 - **Accuracy** = cases where `nutritionally_adequate` is `true` ÷ evaluable cases.
 - **Evaluable** = `nutritionally_adequate` is not `null`. Staple meals and any structurally unavailable case are excluded from the denominator (reported separately) rather than counted for or against.
-- The report also breaks accuracy down by criterion (calories within/below/above; food groups adequate) and per meal, since the food-group verdict does not vary by profile — only the calorie check does.
+- The report also breaks accuracy down by criterion (calories within/below/above; food groups adequate) and per meal, since the food-group verdict does not vary by profile: only the calorie check does.
 - Output: a printed summary and `nutrition_evaluation_results.csv` (git-ignored; regenerate as needed).
 
 Run from the backend project root, inside the venv:
 
-````bash
+```bash
 python -m scripts.evaluate_nutrition_adequacy
-````
+```
 
 `scripts/debug_food_group_exclusions.py` is the companion diagnostic. It lists, per meal, which ingredients are counted or dropped and why, and ends with every ingredient still missing a food-group classification or a gram conversion:
 
-````bash
+```bash
 python -m scripts.debug_food_group_exclusions
 python -m scripts.debug_food_group_exclusions sinigang    # filter by meal name
-````
+```
 
-> ⚠️ There is also a `nutrition_evaluation_results_before.csv` in the project root whose purpose/timing hasn't been documented yet — confirm what it's a "before" snapshot of (e.g. before the ingredients-normalization refactor, or before some other change) before treating either CSV as authoritative for the thesis.
-
-> **Interpretation caveat:** the accuracy figure depends directly on `Meal.calories` being a per-serving value, which is not yet verified (see the Known gap under Meals). Do not treat the figure as final until the 1-serving normalization is complete and the evaluation is rerun. The methodology (bands, scaling, classification) was fixed before results were inspected and should not be adjusted to raise the percentage.
+> **Interpretation caveat:** the accuracy figure depends directly on `Meal.calories` being a per-serving value. The servings normalization (migration `38c3de426422`) has been applied, so regenerate the figure by rerunning the harness against the normalized data before quoting it. The methodology (bands, scaling, classification) was fixed before results were inspected and should not be adjusted to raise the percentage.
 
 ---
 
@@ -2586,10 +3244,10 @@ To be documented in the thesis methodology chapter and reviewed with the adviser
 - **Ulam-only scaling is app-specific.** `ULAM_ENERGY_SHARE` (0.67), the ulam-only Grow/Glow bands, and the staple exclusion are the app's own reconciliation of two whole-plate standards with single-dish meal data.
 - **3 meals per day** is assumed for the per-meal target (`MEALS_PER_DAY`); snacks are not modeled.
 - **Complete one-dish meals.** Dishes that contain their own staple (e.g. Pancit Bihon, Ukoy, Vegetable Lumpia) are judged as ulams with their Go ingredients ignored, which may misjudge them. Scoring such dishes at plate level is a possible refinement.
-- **Ingredient weights are estimates.** Gram conversions for piece/cup units use USDA reference weights and standard culinary conversions; recipe quantities themselves are sample data.
+- **Ingredient weights are estimates.** Gram conversions for piece/cup units use USDA reference weights and standard culinary conversions.
 - **Exact-name classification.** Ingredients are matched to `ingredient_food_groups` via the normalized `Ingredient` table; an unclassified or unconvertible ingredient is excluded from proportions, not guessed.
-- **Ages below 19** are clamped to the 19–29 PDRI bracket.
-- **Calories are provisional** until Week 7 Day 4 (1-serving normalization) is complete.
+- **Ages below 19** are clamped to the 19-29 PDRI bracket.
+- **Calories depend on the servings normalization.** Meal servings, quantities, cost, and calories were normalized to one serving by migration `38c3de426422`; rerun the evaluation harness to regenerate results on the normalized data.
 - **No automated unit tests** for the Nutrition module yet; verification is by hand calculation, Swagger, and the evaluation harness.
 - **Food-group cache staleness.** `get_ingredient_food_group_map()` caches at the process level; a food-group row added without a server restart or explicit `refresh=True` won't be picked up automatically.
 
@@ -2601,27 +3259,27 @@ Database schema changes are managed using **Alembic**.
 
 Run all migrations:
 
-````bash
+```bash
 alembic upgrade head
-````
+```
 
 Check the current migration:
 
-````bash
+```bash
 alembic current
-````
+```
 
 Create a migration after modifying SQLAlchemy models:
 
-````bash
+```bash
 alembic revision --autogenerate -m "describe migration"
-````
+```
 
 Always review autogenerated migrations before applying them.
 
-The migrations added since Week 7, confirmed linear via `alembic history --verbose` (each revision has exactly one parent — no branches):
+The migrations added since Week 7:
 
-````text
+```text
 aa4a5f458607   add physical_activity_level to profiles
 b1c2d3e4f5a6   create ingredient_food_groups (table + initial seed, name-based)
 c2d3e4f5a6b7   add missing ingredient_food_groups rows
@@ -2630,10 +3288,17 @@ d2d3e4f5a6b7   create ingredients table and backfill from existing sources
 e3d4f5a6b7c8   convert meal_ingredients to FK (ingredient_id)
 f4a5b6c7d8e9   convert pantry_items to FK (ingredient_id)
 g5b6c7d8e9f0   create ingredient_prices table
-h6c7d8e9f0a1   link ingredient_food_groups to ingredients (FK, drops ingredient_name)  ← head
-````
+h6c7d8e9f0a1   link ingredient_food_groups to ingredients (FK, drops ingredient_name)
+i7d8e9f0a1b2   add check constraints
+j8e9f0a1b2c3   link ingredient_substitutions to ingredients
+k9f0a1b2c3d4   link disliked_ingredients to ingredients
+l0a1b2c3d4e5   add timestamps to ingredient_prices
+m1a2b3c4d5e6   create allergen_categories
+n2b3c4d5e6f7   merge the pc unit into pcs
+38c3de426422   normalize meal servings to one serving
+```
 
-The Grocery List feature does **not** require a new migration for its base logic because the current implementation does not introduce a database model or table of its own — its new pricing capability rides on the `ingredient_prices` table added above. The Week 7 past-slot guard and peso-precision fixes are also migration-free — application-layer logic, no schema changes.
+Weekly Plan and Savings do **not** require a migration: neither introduces a model or table, since both are computed from existing data. The Grocery List feature likewise has no table of its own; its pricing capability rides on the `ingredient_prices` table. The Week 7 past-slot guard and peso-precision fixes are also migration-free: application-layer logic, no schema changes.
 
 ---
 
@@ -2641,42 +3306,43 @@ The Grocery List feature does **not** require a new migration for its base logic
 
 Clone the repository:
 
-````bash
+```bash
 git clone https://github.com/<username>/TipidMeal-Backend.git
-````
+```
 
 Create a virtual environment:
 
-````bash
+```bash
 python -m venv venv
-````
+```
 
 Activate it.
 
 Windows:
 
-````bash
+```bash
 venv\Scripts\activate
-````
+```
 
 Install dependencies:
 
-````bash
+```bash
 pip install -r requirements.txt
-````
+```
 
 > **Windows users:** Python's `zoneinfo` relies on the OS having an IANA
 > timezone database, which Windows doesn't ship with (unlike Linux/macOS).
 > Install the `tzdata` package (already listed in `requirements.txt`) or
-> any `TIMEZONE`-dependent code — such as the Meal Planner past-slot guard
-> in `core/utils.py` — will raise `ZoneInfoNotFoundError: 'No time zone
-> found with key Asia/Manila'` at request time.
+> any `TIMEZONE`-dependent code, such as the Meal Planner past-slot guard
+> in `core/utils.py` and the "today" used by Weekly Plan and Savings, will
+> raise `ZoneInfoNotFoundError: 'No time zone found with key Asia/Manila'`
+> at request time.
 
-Create a `.env` file.
+Create a `.env` file (an `.env.example` is provided).
 
 Example:
 
-````env
+```env
 PROJECT_NAME=TipidMeal API
 PROJECT_VERSION=1.0.0
 API_V1_PREFIX=/api/v1
@@ -2687,15 +3353,15 @@ DATABASE_URL=your_database_url
 
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-````
+```
 
 Never commit `.env` or Supabase secrets to the repository.
 
-Run pending migrations after cloning. A fresh database needs them for `physical_activity_level`, `budget_per_meal`, the normalized `ingredients`/`ingredient_prices` tables, and the FK-based `ingredient_food_groups` and its seed data (without the seed, the Nutrition module classifies no ingredients):
+Run pending migrations after cloning. A fresh database needs them for `physical_activity_level`, `budget_per_meal`, the normalized `ingredients` tables, the FK-based `ingredient_food_groups` and its seed data (without the seed, the Nutrition module classifies no ingredients), and the servings normalization:
 
-````bash
+```bash
 alembic upgrade head
-````
+```
 
 ---
 
@@ -2703,15 +3369,15 @@ alembic upgrade head
 
 Start the development server:
 
-````bash
+```bash
 uvicorn app.main:app --reload
-````
+```
 
 The API will be available at:
 
-````text
+```text
 http://127.0.0.1:8000
-````
+```
 
 ---
 
@@ -2719,15 +3385,15 @@ http://127.0.0.1:8000
 
 Swagger UI:
 
-````text
+```text
 http://127.0.0.1:8000/docs
-````
+```
 
 ReDoc:
 
-````text
+```text
 http://127.0.0.1:8000/redoc
-````
+```
 
 Swagger UI can be used to inspect and manually test API endpoints.
 
@@ -2737,7 +3403,7 @@ Swagger UI can be used to inspect and manually test API endpoints.
 
 The current backend implementation includes:
 
-````text
+```text
 Authentication                        ✅
 Supabase JWT Verification             ✅
 Profile Management                    ✅
@@ -2745,58 +3411,68 @@ Profile Image Upload                  ✅
 Physical Activity Level               ✅
 Budget Per Meal (renamed)             ✅
 Food Allergies                        ✅
-Disliked Ingredients                  ✅
+Disliked Ingredients (FK-based)       ✅
 Ingredients Normalized (FK-based)     ✅
-Ingredient Prices (reference data)    ✅ — seed status unconfirmed
-Meals                                  ✅
-Meal Ingredients (FK-based)            ✅
-Meal Instructions                      ✅
-Meal Servings Normalization (1-serv)   🔲 Not yet done — sample data
-Ingredient Suggestions                 ✅
-Pantry Management                      ✅
-Pantry Quantity Handling               ✅
-Pantry Ingredients (FK-based)          ✅
-Ingredient Substitutions               ✅ (still name-based)
-Recommendation Rules                   ✅
-Recommendation Scoring                 ✅
-Recommendation Affordability Filter    ✅
-Recommendation Cost-Based Sort         ✅
+Allergen Categories                   ✅
+Unit Conversions (reference table)    ✅
+Ingredient Prices (reference data)    ✅ table only, not yet seeded
+Meals                                 ✅
+Meal Ingredients (FK-based)           ✅
+Meal Instructions                     ✅
+Meal Servings Normalization (1-serving) ✅
+Ingredient Suggestions                ✅
+Pantry Management                     ✅
+Pantry Quantity Handling              ✅
+Pantry Ingredients (FK-based)         ✅
+Ingredient Substitutions (FK-based)   ✅
+Recommendation Rules                  ✅
+Recommendation Scoring                ✅
+Recommendation Affordability Filter   ✅
+Recommendation Cost-Based Sort        ✅
 Cooking Skill Scoring (manually verified) ✅
-Ingredient Availability                ✅
-TF-IDF Ingredient Coverage             ✅
-Recommendation API                     ✅
-Meal Planner                           ✅
-Meal Plan CRUD                         ✅
-Meal Plan Authentication               ✅
-Meal Plan User Isolation               ✅
-Meal Plan Past-Slot Guard              ✅
-Peso Precision (Weekly Total)          ✅
-Grocery List                           ✅
-Grocery List Aggregation               ✅
-Grocery List Pantry Comparison         ✅
-Grocery List Unit Safety               ✅
-Grocery List Pricing                   ✅ — see seed-data caveat above
-Grocery List Date Range                ✅
-Grocery List Authentication            ✅
-Grocery List User Isolation            ✅
-Favorites                              ✅
-Favorites CRUD (Add/List/Remove)       ✅
-Favorites Idempotency                  ✅
-Favorites Authentication               ✅
-Favorites User Isolation               ✅
+Ingredient Availability               ✅
+TF-IDF Ingredient Coverage            ✅
+Recommendation API                    ✅
+Meal Planner                          ✅
+Meal Plan CRUD                        ✅
+Meal Plan Authentication              ✅
+Meal Plan User Isolation              ✅
+Meal Plan Past-Slot Guard             ✅
+Peso Precision (Weekly Total)         ✅
+Weekly Plan Generation                ✅
+Weekly Plan Variety Rules             ✅
+Weekly Plan Accept (save to planner)  ✅
+Weekly Plan Authentication            ✅
+Savings Summary (week / month)        ✅
+Savings Verdict                       ✅
+Savings Daily Breakdown               ✅
+Savings Projection                    ✅
+Savings Authentication                ✅
+Grocery List                          ✅
+Grocery List Aggregation              ✅
+Grocery List Pantry Comparison        ✅
+Grocery List Unit Safety              ✅
+Grocery List Pricing                  ✅ code in place; prices not yet seeded
+Grocery List Date Range               ✅
+Grocery List Authentication           ✅
+Grocery List User Isolation           ✅
+Favorites                             ✅
+Favorites CRUD (Add/List/Remove)      ✅
+Favorites Idempotency                 ✅
+Favorites Authentication              ✅
+Favorites User Isolation              ✅
 Daily Caloric Requirement (PDRI x PAL) ✅
-Per-Meal Caloric Adequacy              ✅
-Ingredient Food Groups (FK-based)      ✅
-Food-Group Adequacy (ulam-only)        ✅
-Nutrition Endpoint                     ✅
-Nutrition on Recommendations           ✅
-Nutrition Evaluation Harness           ✅
-Nutrition Results Final                🔲 Pending Day 4 data verification + rerun
-Nutrition Unit Tests                   🔲 Not yet done
-Alembic Migrations                     ✅ — chain order pending confirmation
-````
+Per-Meal Caloric Adequacy             ✅
+Ingredient Food Groups (FK-based)     ✅
+Food-Group Adequacy (ulam-only)       ✅
+Nutrition Endpoint                    ✅
+Nutrition on Recommendations          ✅
+Nutrition Evaluation Harness          ✅
+Automated Unit Tests                  🔲 Not yet done (scoring, nutrition, weekly plan, savings)
+Alembic Migrations                    ✅
+```
 
-The backend currently provides the core API and database functionality required by the TipidMeal application, plus the Week 8 Nutrition module, its evaluation harness, a normalized ingredient reference layer shared across Meals/Pantry/Nutrition, and optional grocery-list pricing. Week 7's Meal Servings normalization (Part 5 / Day 4) is the one item from the Week 7 plan not yet implemented — current seed data remains sample data, not yet corrected to a 1-serving baseline — and the nutritional-adequacy results should be considered final only once it is done and the evaluation is rerun.
+The backend currently provides the core API and database functionality required by the TipidMeal application, plus the Week 8 Nutrition module and its evaluation harness, a normalized ingredient reference layer shared across Meals, Pantry, Recommendations, Nutrition, and Grocery List, meal data normalized to one serving, weekly plan generation, savings summaries, and optional grocery-list pricing. The remaining data task is seeding `ingredient_prices` so grocery cost estimates have real values to work from.
 
 ---
 
@@ -2806,7 +3482,7 @@ The recommendation engine is intentionally deterministic.
 
 The current system uses:
 
-````text
+```text
 Profile
 +
 Pantry
@@ -2822,9 +3498,9 @@ TF-IDF Ingredient Coverage
 Weighted Scoring
 +
 Affordability Hard Filter (Week 7)
-````
+```
 
-This approach provides predictable and explainable recommendations. The Nutrition module (Week 8) is equally deterministic: every verdict traces back to published Philippine standards and explicit, documented scaling choices.
+This approach provides predictable and explainable recommendations. The Nutrition module (Week 8) is equally deterministic: every verdict traces back to published Philippine standards and explicit, documented scaling choices. The Weekly Plan planner is deterministic as well, apart from an optional small score jitter that can be fixed with a `seed`.
 
 An external AI API is not required for the current recommendation implementation.
 
@@ -2834,7 +3510,7 @@ An external AI API is not required for the current recommendation implementation
 
 The current backend supports the following overall application workflow:
 
-````text
+```text
                     Supabase Auth
                          ↓
                       Profile
@@ -2843,11 +3519,13 @@ The current backend supports the following overall application workflow:
         ↓                ↓                ↓              ↓
      Pantry            Meals        Recommendations   Favorites
         │                │                │
-        │                └────────────────┘
-        │                         ↓
+        │                └────────────────┤
+        │                         ↓       ↓
         │                  Recommended Meals ──→ Nutrition Adequacy
         │                         ↓
-        └──────────────→  Meal Planner
+        │                    Weekly Plan (draft → accept)
+        │                         ↓
+        └──────────────→  Meal Planner ──→ Savings
                                 ↓
                          Planned Meals
                                 ↓
@@ -2858,14 +3536,16 @@ The current backend supports the following overall application workflow:
                        Missing Ingredients
                                 ↓
                              Shopping
-````
+```
 
 This creates the core TipidMeal workflow:
 
-````text
+```text
 Discover
    ↓
-Plan (or Favorite for later)
+Plan (one meal at a time, or a generated Weekly Plan), or Favorite for later
+   ↓
+Check Savings against budget
    ↓
 Check Pantry
    ↓
@@ -2874,9 +3554,9 @@ Generate Grocery List (with cost estimate)
 Shop
    ↓
 Cook
-````
+```
 
-Nutritional adequacy is computed per meal for the authenticated user and shown alongside meals and recommendations; it informs the user's choice but does not alter the Discover → Plan → Shop flow. Ingredients themselves are now a shared, normalized reference layer underneath Meals, Pantry, Nutrition, and Grocery List.
+Nutritional adequacy is computed per meal for the authenticated user and shown alongside meals and recommendations; it informs the user's choice but does not alter the Discover → Plan → Shop flow. Ingredients themselves are a shared, normalized reference layer underneath Meals, Pantry, Recommendations, Nutrition, and Grocery List.
 
 ---
 

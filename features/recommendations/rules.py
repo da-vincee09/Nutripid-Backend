@@ -1,8 +1,10 @@
+import time
 from decimal import Decimal
+
+from sqlalchemy.orm import joinedload
 
 from features.recommendations.utils import normalize_ingredient
 from features.recommendations.models import IngredientSubstitution
-from features.ingredients.models.ingredient import Ingredient
 from features.ingredients.repository import convert_quantity
 
 def is_ingredient_available(
@@ -86,38 +88,58 @@ def classify_ingredients(
     }
 
 
+# ---------------------------------------------------------------------
+# Substitution lookup cache
+#
+# get_substitute() used to run 2-3 database queries on every call, and
+# it is called for every missing ingredient of every meal. Instead, the
+# whole substitution table is loaded once (in a single query with joins)
+# and answered from memory. The cache refreshes every 5 minutes.
+# ---------------------------------------------------------------------
+_substitute_cache: dict[str, str] | None = None
+_substitute_cache_loaded_at: float = 0.0
+_SUBSTITUTE_CACHE_TTL = 300  # seconds
+
+
+def _get_substitute_map(db) -> dict[str, str]:
+    """normalized ingredient name -> substitute name, loaded in one query."""
+    global _substitute_cache, _substitute_cache_loaded_at
+
+    now = time.monotonic()
+    if (
+        _substitute_cache is None
+        or now - _substitute_cache_loaded_at > _SUBSTITUTE_CACHE_TTL
+    ):
+        rows = (
+            db.query(IngredientSubstitution)
+            .options(
+                joinedload(IngredientSubstitution.ingredient_ref),
+                joinedload(IngredientSubstitution.substitute_ref),
+            )
+            .all()
+        )
+
+        mapping: dict[str, str] = {}
+        for row in rows:
+            key = normalize_ingredient(row.ingredient)
+            # First match wins, same as the old .first() behavior
+            mapping.setdefault(key, row.substitute)
+
+        _substitute_cache = mapping
+        _substitute_cache_loaded_at = now
+
+    return _substitute_cache
+
+
 def get_substitute(
     db,
     ingredient: str,
 ) -> str | None:
     normalized = normalize_ingredient(ingredient)
 
-    # IngredientSubstitution.ingredient/.substitute are read-only
-    # Python properties (name resolved through ingredient_ref/
-    # substitute_ref), not mapped columns — they can't be used in a
-    # .filter() query-time comparison. Look up the Ingredient row by
-    # name first, then filter IngredientSubstitution by its real
-    # mapped column, ingredient_id.
-    ingredient_row = (
-        db.query(Ingredient)
-        .filter(Ingredient.name == normalized)
-        .first()
-    )
-
-    if ingredient_row is None:
-        return None # ingredient not in the database, so no substitute
-
-    # Find a substitution record for this ingredient (first match only)
-    substitution = (
-        db.query(IngredientSubstitution)
-        .filter(IngredientSubstitution.ingredient_id == ingredient_row.id)
-        .first()
-    )
-
-    if substitution is None:
-        return None # no substitute defined
-
-    return substitution.substitute  # property shim -> substitute_ref.name
+    # Returns None if the ingredient isn't in the database or has no
+    # substitute defined, same as before.
+    return _get_substitute_map(db).get(normalized)
 
 
 def get_effective_available_ingredients(
