@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "TipidMeal API"
+    PROJECT_NAME: str = "Nutripid API"
     PROJECT_VERSION: str = "1.0.0"
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = True

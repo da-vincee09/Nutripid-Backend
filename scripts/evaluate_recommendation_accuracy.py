@@ -293,7 +293,7 @@ def run_budget_tests(meals: list[Meal]) -> dict:
 #     tables, reimplemented from scratch would just be transcription,
 #     not independent verification.
 #   - MealTfidfEngine: used for consistency with the coverage figure
-#     reported as TIPIDMEAL's supporting measure. NOTE: as configured,
+#     reported as NUTRIPID's supporting measure. NOTE: as configured,
 #     this uses sklearn's default smoothed/L2-normalized TF-IDF, which
 #     differs from the plain log(n/df) formula documented in Chapter 3
 #     — see accompanying note; this is a separate, pre-existing
